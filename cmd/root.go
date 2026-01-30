@@ -21,6 +21,7 @@ var (
 	upstreamProxy   string
 	port            int
 	verbose         bool
+	logFile         string
 )
 
 var rootCmd = &cobra.Command{
@@ -37,7 +38,10 @@ var rootCmd = &cobra.Command{
   smart-proxy --match "*.example.com" --overwrite useragent=Bot --upstream http://127.0.0.1:7890 -- node app.js
 
   # 指定端口和详细日志
-  smart-proxy --port 8888 --match "/api/" --overwrite useragent=Test --verbose -- npm start`,
+  smart-proxy --port 8888 --match "/api/" --overwrite useragent=Test --verbose -- npm start
+
+  # 运行交互式应用（如 vim）时，建议将 verbose 日志输出到文件
+  smart-proxy --verbose --log-file ./proxy.log -- vim test.js`,
 	Args: cobra.MinimumNArgs(1),
 	Run:  run,
 }
@@ -48,9 +52,23 @@ func init() {
 	rootCmd.Flags().StringVar(&upstreamProxy, "upstream", "", "上游代理地址 (例: http://127.0.0.1:7890)")
 	rootCmd.Flags().IntVar(&port, "port", 0, "代理服务器端口 (默认随机分配)")
 	rootCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "详细日志输出")
+	rootCmd.Flags().StringVar(&logFile, "log-file", "", "日志文件路径 (用于避免干扰交互式应用，如vim)")
 }
 
 func run(cmd *cobra.Command, args []string) {
+	// 设置日志输出
+	if logFile != "" {
+		f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			log.Fatalf("打开日志文件失败: %v", err)
+		}
+		defer f.Close()
+		
+		fmt.Printf("详细日志将输出到文件: %s\n", logFile)
+		log.SetOutput(f)
+		log.Printf("=== Smart Proxy 启动 (PID: %d) ===", os.Getpid())
+	}
+
 	// 分配端口
 	var proxyPort int
 	var err error
