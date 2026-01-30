@@ -6,20 +6,26 @@
 
 使用配置文件可以避免冗长的命令行参数。
 
-### smart-proxy.yaml
+### smart-proxy.yaml (成组规则)
 
 ```yaml
-match:
-  - "httpbin.org"
-overwrite:
-  - "User-Agent=ConfigBot"
-  - "X-Source=SmartProxy"
+rules:
+  - name: "httpbin-headers"
+    match: ["httpbin.org/headers"]
+    overwrite:
+      User-Agent: "HeaderBot"
+  - name: "httpbin-get"
+    match: ["httpbin.org/get"]
+    overwrite:
+      User-Agent: "GetBot"
+      X-Custom: "Value"
+
 verbose: true
 ```
 
 **运行命令**:
 ```bash
-smart-proxy -- node examples/test-http.js
+smart-proxy -- node examples/test-multiple.js
 ```
 
 ## 示例 1: 简单的 HTTP 请求测试

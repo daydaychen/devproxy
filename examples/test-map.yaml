@@ -1,0 +1,17 @@
+rules:
+  - name: "httpbin-headers"
+    match: ["httpbin.org/headers"]
+    overwrite:
+      User-Agent: "HeaderBot"
+      X-Custom: "Custom-Group"
+  - name: "httpbin-get"
+    match: ["httpbin.org/get"]
+    overwrite:
+      User-Agent: "GetBot"
+      X-Group: "Get"
+
+# 全局顶层规则
+overwrite:
+  X-Smart-Proxy: "v2"
+
+verbose: true

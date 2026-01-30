@@ -11,36 +11,49 @@ import (
 	"github.com/elazarl/goproxy"
 )
 
+// ProxyRule 定义一组匹配规则及其对应的重写动作
+type ProxyRule struct {
+	Name      string
+	Matchers  []URLMatcher
+	Rewriters []*HeaderRewriter
+}
+
 // ProxyServer MITM代理服务器
 type ProxyServer struct {
 	Port          int
 	UpstreamProxy string
-	Matchers      []URLMatcher
-	Rewriters     []*HeaderRewriter
+	Rules         []*ProxyRule
 	Verbose       bool
 	proxy         *goproxy.ProxyHttpServer
 	server        *http.Server
+	defaultRule   *ProxyRule
 }
 
 // NewProxyServer 创建新的代理服务器
 func NewProxyServer(port int, upstream string, verbose bool) *ProxyServer {
+	defaultRule := &ProxyRule{Name: "default"}
 	return &ProxyServer{
 		Port:          port,
 		UpstreamProxy: upstream,
 		Verbose:       verbose,
-		Matchers:      []URLMatcher{},
-		Rewriters:     []*HeaderRewriter{},
+		Rules:         []*ProxyRule{defaultRule},
+		defaultRule:   defaultRule,
 	}
 }
 
-// AddMatcher 添加URL匹配器
-func (s *ProxyServer) AddMatcher(matcher URLMatcher) {
-	s.Matchers = append(s.Matchers, matcher)
+// AddRule 添加一个新的规则组
+func (s *ProxyServer) AddRule(rule *ProxyRule) {
+	s.Rules = append(s.Rules, rule)
 }
 
-// AddRewriter 添加请求头重写器
+// AddMatcher 添加全局URL匹配器 (添加到默认规则)
+func (s *ProxyServer) AddMatcher(matcher URLMatcher) {
+	s.defaultRule.Matchers = append(s.defaultRule.Matchers, matcher)
+}
+
+// AddRewriter 添加请求头重写器 (添加到默认规则)
 func (s *ProxyServer) AddRewriter(rewriter *HeaderRewriter) {
-	s.Rewriters = append(s.Rewriters, rewriter)
+	s.defaultRule.Rewriters = append(s.defaultRule.Rewriters, rewriter)
 }
 
 // Start 启动代理服务器
@@ -81,33 +94,36 @@ func (s *ProxyServer) Start() error {
 			log.Printf("[REQUEST] %s %s", req.Method, reqURL)
 		}
 
-		// 检查是否匹配任何规则
-		matched := false
-		if len(s.Matchers) == 0 {
-			// 如果没有配置匹配器，则匹配所有请求
-			matched = true
-		} else {
-			for _, matcher := range s.Matchers {
-				if matcher.Match(reqURL) {
+		// 遍历所有规则组
+		for _, rule := range s.Rules {
+			matched := false
+			if len(rule.Matchers) == 0 {
+				// 如果该规则没有配置匹配器，且不是默认规则（或者默认规则有重写内容），则匹配所有请求
+				// 注意：这里为了灵活，空匹配器视为匹配所有
+				if len(rule.Rewriters) > 0 {
 					matched = true
-					break
+				}
+			} else {
+				for _, matcher := range rule.Matchers {
+					if matcher.Match(reqURL) {
+						matched = true
+						break
+					}
 				}
 			}
-		}
 
-		// 如果匹配，则应用重写规则
-		if matched {
-			if s.Verbose {
-				log.Printf("[MATCHED] %s %s", req.Method, reqURL)
-			}
-			for _, rewriter := range s.Rewriters {
-				rewriter.Rewrite(req)
+			// 如果该组规则匹配，则应用该组的重写规则
+			if matched {
 				if s.Verbose {
-					log.Printf("[REWRITE] %s: %s", rewriter.HeaderName, rewriter.HeaderValue)
+					log.Printf("[RULE:%s MATCHED] %s %s", rule.Name, req.Method, reqURL)
+				}
+				for _, rewriter := range rule.Rewriters {
+					rewriter.Rewrite(req)
+					if s.Verbose {
+						log.Printf("[RULE:%s REWRITE] %s: %s", rule.Name, rewriter.HeaderName, rewriter.HeaderValue)
+					}
 				}
 			}
-		} else if s.Verbose {
-			log.Printf("[SKIP] %s %s", req.Method, reqURL)
 		}
 
 		return req, nil

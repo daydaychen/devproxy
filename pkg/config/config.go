@@ -7,14 +7,22 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// RuleConfig 成组的匹配和重写规则
+type RuleConfig struct {
+	Name      string            `yaml:"name"`
+	Match     []string          `yaml:"match"`
+	Overwrite map[string]string `yaml:"overwrite"`
+}
+
 // Config 配置文件结构
 type Config struct {
-	Match      []string `yaml:"match"`
-	Overwrite  []string `yaml:"overwrite"`
-	Upstream   string   `yaml:"upstream"`
-	Port       int      `yaml:"port"`
-	Verbose    bool     `yaml:"verbose"`
-	LogFile    string   `yaml:"log-file"`
+	Rules      []RuleConfig      `yaml:"rules"`
+	Match      []string          `yaml:"match"`
+	Overwrite  map[string]string `yaml:"overwrite"`
+	Upstream   string            `yaml:"upstream"`
+	Port       int               `yaml:"port"`
+	Verbose    bool              `yaml:"verbose"`
+	LogFile    string            `yaml:"log-file"`
 }
 
 // LoadConfig 从文件加载配置

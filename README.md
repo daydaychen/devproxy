@@ -45,25 +45,37 @@ smart-proxy --config config.yaml -- curl http://httpbin.org/headers
 
 ### 1. 使用配置文件 (YAML)
 
-这是推荐的使用方式，可以将常用规则持久化。
+这是推荐的使用方式，可以将常用规则持久化。支持多级配置，加载顺序及优先级如下（后者覆盖前者，但列表类配置会累加）：
 
-创建 `smart-proxy.yaml`:
+1.  **全局配置**: `~/.config/smart-proxy/global.yaml` (存放通用规则)
+2.  **目录配置**: 当前目录下的 `smart-proxy.yaml` 或 `.smart-proxy.yaml` (存放项目特定规则)
+3.  **显式配置**: 通过 `--config` 指定的文件 (优先级高于默认目录配置)
+4.  **命令行参数**: 优先级最高。
+
+#### 规则组模式 (推荐)
+你可以将 `match` 和 `overwrite` 成组设置，实现针对不同域名的差异化修改：
+
 ```yaml
-match:
-  - "google.com"
-  - "github.com"
+rules:
+  - name: "google-api"
+    match: ["google.com/api"]
+    overwrite:
+      Authorization: "Bearer token1"
+  - name: "github-api"
+    match: ["github.com"]
+    overwrite:
+      Authorization: "token2"
+      User-Agent: "GithubBot"
+
+# 全局通用规则 (对所有匹配请求生效)
+match: ["*"]
 overwrite:
-  - "User-Agent=SmartProxy/1.0"
-  - "X-Custom-Header=Hello"
-verbose: true
-# upstream: "http://127.0.0.1:7890"
+  X-Smart-Proxy: "v1"
 ```
 
 运行:
 ```bash
-smart-proxy -- node server.js  # 自动加载当前目录下的 smart-proxy.yaml
-# 或
-smart-proxy --config my-rules.yaml -- node server.js
+smart-proxy -- node server.js  # 自动集成全局和当前的 smart-proxy.yaml
 ```
 
 ### 2. 基本代理 + UA 重写
