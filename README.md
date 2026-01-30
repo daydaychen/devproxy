@@ -10,6 +10,7 @@
 - 🔄 **上游代理** - 支持转发到 HTTP/SOCKS 代理（如 Clash）
 - 🎲 **随机端口** - 自动分配可用端口，避免冲突
 - 🔐 **进程隔离** - 只代理启动的子进程，不影响系统其他程序
+- 💻 **交互式应用** - 支持 vim、bash 等交互式程序
 - 📝 **详细日志** - 可选的详细日志输出，方便调试
 
 ## 🚀 快速开始
@@ -98,6 +99,19 @@ smart-proxy \
     --match "api.github.com" \
     --overwrite useragent=MyGitHubBot \
     -- node -e "require('https').get('https://api.github.com/users/github', res => res.pipe(process.stdout))"
+```
+
+### 7. 交互式应用（vim、bash 等）
+
+```bash
+# 在代理环境下运行 vim
+smart-proxy --match "githubusercontent.com" --verbose -- vim
+
+# 在代理环境下运行交互式 bash
+smart-proxy --upstream http://127.0.0.1:7890 -- bash
+
+# 在代理环境下运行 Python 交互式解释器
+smart-proxy --match "pypi.org" -- python3
 ```
 
 ## ⚙️ 命令行参数

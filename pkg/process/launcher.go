@@ -40,15 +40,11 @@ func (l *ProcessLauncher) Start() error {
 		"NODE_TLS_REJECT_UNAUTHORIZED=0",
 	)
 
-	// 将子进程的输出重定向到当前进程
+	// 将子进程的输入输出连接到当前进程
+	// 这样交互式应用（如vim）可以正常工作
 	l.cmd.Stdout = os.Stdout
 	l.cmd.Stderr = os.Stderr
 	l.cmd.Stdin = os.Stdin
-
-	// 设置进程组，以便可以一起终止
-	l.cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
-	}
 
 	if l.Verbose {
 		log.Printf("启动进程: %s %v", l.Command, l.Args)
@@ -81,15 +77,12 @@ func (l *ProcessLauncher) Stop() error {
 		log.Printf("终止子进程 (PID: %d)", l.cmd.Process.Pid)
 	}
 
-	// 尝试优雅地终止进程组
-	pgid, err := syscall.Getpgid(l.cmd.Process.Pid)
-	if err == nil {
-		syscall.Kill(-pgid, syscall.SIGTERM)
-	}
-
-	// 如果优雅终止失败，强制杀死进程
-	if err := l.cmd.Process.Kill(); err != nil {
-		return fmt.Errorf("终止进程失败: %w", err)
+	// 尝试优雅地终止进程
+	if err := l.cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		// 如果发送SIGTERM失败，强制杀死进程
+		if err := l.cmd.Process.Kill(); err != nil {
+			return fmt.Errorf("终止进程失败: %w", err)
+		}
 	}
 
 	return nil
