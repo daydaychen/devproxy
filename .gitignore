@@ -1,0 +1,5 @@
+.DS_Store
+smart-proxy
+*.log
+*.pem
+*.key
