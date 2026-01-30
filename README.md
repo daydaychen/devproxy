@@ -34,13 +34,39 @@ smart-proxy [flags] -- <command> [args...]
 **最简单的示例**:
 
 ```bash
-# 代理 curl 请求，重写 User-Agent
+# 使用命令行参数
 smart-proxy --match "httpbin.org" --overwrite useragent=MyBot -- curl http://httpbin.org/headers
+
+# 使用配置文件
+smart-proxy --config config.yaml -- curl http://httpbin.org/headers
 ```
 
 ## 📖 使用示例
 
-### 1. 基本代理 + UA 重写
+### 1. 使用配置文件 (YAML)
+
+这是推荐的使用方式，可以将常用规则持久化。
+
+创建 `smart-proxy.yaml`:
+```yaml
+match:
+  - "google.com"
+  - "github.com"
+overwrite:
+  - "User-Agent=SmartProxy/1.0"
+  - "X-Custom-Header=Hello"
+verbose: true
+# upstream: "http://127.0.0.1:7890"
+```
+
+运行:
+```bash
+smart-proxy -- node server.js  # 自动加载当前目录下的 smart-proxy.yaml
+# 或
+smart-proxy --config my-rules.yaml -- node server.js
+```
+
+### 2. 基本代理 + UA 重写
 
 ```bash
 smart-proxy \
@@ -118,11 +144,13 @@ smart-proxy --match "pypi.org" -- python3
 
 | 参数 | 简写 | 说明 | 示例 |
 |------|------|------|------|
+| `--config` | `-c` | 配置文件路径 (YAML) | `--config config.yaml` |
 | `--match` | - | URL 匹配规则（可多次指定） | `--match "domain.com/api"` |
 | `--overwrite` | - | 请求头重写（格式: `header=value`） | `--overwrite useragent=Bot` |
 | `--upstream` | - | 上游代理地址 | `--upstream http://127.0.0.1:7890` |
 | `--port` | - | 指定代理端口（默认随机） | `--port 8888` |
 | `--verbose` | `-v` | 详细日志输出 | `--verbose` |
+| `--log-file` | - | 日志文件路径 | `--log-file proxy.log` |
 
 ### 请求头简写
 
@@ -196,6 +224,8 @@ smart-proxy/
 ├── cmd/
 │   └── root.go            # 命令行定义和主逻辑
 ├── pkg/
+│   ├── config/
+│   │   └── config.go      # 配置文件加载
 │   ├── proxy/
 │   │   ├── server.go      # MITM 代理服务器
 │   │   ├── matcher.go     # URL 匹配引擎

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"syscall"
 
+	"smart-proxy/pkg/config"
 	"smart-proxy/pkg/process"
 	"smart-proxy/pkg/proxy"
 	"smart-proxy/pkg/util"
@@ -15,13 +16,70 @@ import (
 	"github.com/spf13/cobra"
 )
 
+func loadConfig(cmd *cobra.Command) {
+	var targetConfig string
+	if configFile != "" {
+		targetConfig = configFile
+	} else {
+		// 检查默认配置文件
+		defaults := []string{"smart-proxy.yaml", ".smart-proxy.yaml"}
+		for _, d := range defaults {
+			if _, err := os.Stat(d); err == nil {
+				targetConfig = d
+				break
+			}
+		}
+	}
+
+	if targetConfig == "" {
+		return
+	}
+
+	cfg, err := config.LoadConfig(targetConfig)
+	if err != nil {
+		if configFile != "" {
+			log.Fatalf("加载配置文件失败: %v", err)
+		}
+		// 如果是默认配置文件加载失败且没有显示指定，可能只是文件损坏，这里选择继续运行但报错提示
+		fmt.Printf("警告: 加载默认配置文件 %s 失败: %v\n", targetConfig, err)
+		return
+	}
+
+	fmt.Printf("使用配置文件: %s\n", targetConfig)
+
+	// 合并配置
+	// 如果命令行没有指定某些 flag，则尝试从配置文件读取
+	if !cmd.Flags().Changed("upstream") && cfg.Upstream != "" {
+		upstreamProxy = cfg.Upstream
+	}
+	if !cmd.Flags().Changed("port") && cfg.Port > 0 {
+		port = cfg.Port
+	}
+	if !cmd.Flags().Changed("verbose") && cfg.Verbose {
+		verbose = cfg.Verbose
+	}
+	if !cmd.Flags().Changed("log-file") && cfg.LogFile != "" {
+		logFile = cfg.LogFile
+	}
+
+	// 对于 Array 类型的配置，我们将配置文件中的内容追加到命令行参数中
+	// 这样可以同时使用配置文件里的基础规则和命令行里的临时规则
+	if len(cfg.Match) > 0 {
+		matchPatterns = append(matchPatterns, cfg.Match...)
+	}
+	if len(cfg.Overwrite) > 0 {
+		overwriteRules = append(overwriteRules, cfg.Overwrite...)
+	}
+}
+
 var (
-	matchPatterns   []string
-	overwriteRules  []string
-	upstreamProxy   string
-	port            int
-	verbose         bool
-	logFile         string
+	matchPatterns  []string
+	overwriteRules []string
+	upstreamProxy  string
+	port           int
+	verbose        bool
+	logFile        string
+	configFile     string
 )
 
 var rootCmd = &cobra.Command{
@@ -31,6 +89,9 @@ var rootCmd = &cobra.Command{
 它只代理启动的子进程流量，不影响系统其他进程。
 
 示例:
+  # 使用配置文件
+  smart-proxy --config config.yaml -- node server.js
+
   # 基本用法
   smart-proxy --match "domain.com/v1/api" --overwrite useragent=CustomUA -- node server.js
 
@@ -53,9 +114,13 @@ func init() {
 	rootCmd.Flags().IntVar(&port, "port", 0, "代理服务器端口 (默认随机分配)")
 	rootCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "详细日志输出")
 	rootCmd.Flags().StringVar(&logFile, "log-file", "", "日志文件路径 (用于避免干扰交互式应用，如vim)")
+	rootCmd.Flags().StringVarP(&configFile, "config", "c", "", "配置文件路径 (支持 YAML 格式)")
 }
 
 func run(cmd *cobra.Command, args []string) {
+	// 加载配置文件
+	loadConfig(cmd)
+
 	// 设置日志输出
 	if logFile != "" {
 		f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)

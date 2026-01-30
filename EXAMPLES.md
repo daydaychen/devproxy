@@ -2,6 +2,26 @@
 
 本目录包含用于测试 smart-proxy 的示例脚本。
 
+## 示例 0: 配置文件模式 (推荐)
+
+使用配置文件可以避免冗长的命令行参数。
+
+### smart-proxy.yaml
+
+```yaml
+match:
+  - "httpbin.org"
+overwrite:
+  - "User-Agent=ConfigBot"
+  - "X-Source=SmartProxy"
+verbose: true
+```
+
+**运行命令**:
+```bash
+smart-proxy -- node examples/test-http.js
+```
+
 ## 示例 1: 简单的 HTTP 请求测试
 
 ### test-http.js
