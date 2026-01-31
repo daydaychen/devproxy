@@ -159,9 +159,11 @@ func (s *ProxyServer) Start() error {
 
 	// 启动HTTP服务器
 	s.server = &http.Server{
-		Addr:     fmt.Sprintf("127.0.0.1:%d", s.Port),
-		Handler:  s.proxy,
-		ErrorLog: s.Logger,
+		Addr:              fmt.Sprintf("127.0.0.1:%d", s.Port),
+		Handler:           s.proxy,
+		ErrorLog:          s.Logger,
+		ReadHeaderTimeout: 10 * time.Second, // 限制读取头部超时
+		IdleTimeout:       30 * time.Second, // 限制空闲连接超时
 	}
 
 	s.Logger.Printf("代理服务器启动在 http://127.0.0.1:%d", s.Port)

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
@@ -197,6 +198,9 @@ func runProxyWorker(cmd *cobra.Command, args []string) {
 		log.Fatalf("代理工作进程启动失败: %v", err)
 	}
 
+	// 内存优化：初始化完成后强制回收
+	debug.FreeOSMemory()
+
 	// 阻塞等待
 	select {}
 }
@@ -266,6 +270,11 @@ func run(cmd *cobra.Command, args []string) {
 		}
 	}()
 
+	// 内存优化：主进程不再需要这些大数组，因为它们已经传递给（或会被重新加载到）工作进程
+	matchPatterns = nil
+	overwriteRules = nil
+	configRules = nil
+
 	// 创建进程启动器
 	targetCommand := args[0]
 	targetArgs := args[1:]
@@ -312,6 +321,9 @@ func run(cmd *cobra.Command, args []string) {
 		restoreTerminal()
 		log.Fatalf("启动子进程失败: %v", err)
 	}
+
+	// 内存优化：主进程启动完所有组件后释放不再需要的初始化内存
+	debug.FreeOSMemory()
 
 	// 处理系统信号
 	sigChan := make(chan os.Signal, 1)
@@ -367,6 +379,10 @@ func run(cmd *cobra.Command, args []string) {
 
 // Execute 执行命令
 func Execute() {
+	// 针对命令行工具优化：设置更积极的 GC (默认 100 降至 50)
+	// 这有助于在低交互期间更快回收内存
+	debug.SetGCPercent(50)
+
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
