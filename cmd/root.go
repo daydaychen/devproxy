@@ -165,6 +165,12 @@ func run(cmd *cobra.Command, args []string) {
 		// 2. 创建一个独立的 logger 实例供代理使用
 		loggerInstance = log.New(strippedWriter, "", log.LstdFlags)
 		
+		// 3. 架构级修复：劫持底层 FD 2 (Stderr)
+		// 即使第三方库绕过 log 包直接写入 os.Stderr (FD 2)，也会被重定向到日志文件
+		if err := util.RedirectStderr(logFileWriter); err != nil {
+			log.Printf("警告: 无法重定向底层 Stderr: %v", err)
+		}
+
 		log.Printf("=== Smart Proxy 启动 (PID: %d) ===", os.Getpid())
 	}
 
