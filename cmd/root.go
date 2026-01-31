@@ -207,7 +207,6 @@ func run(cmd *cobra.Command, args []string) {
 	loadConfig(cmd)
 
 	var logFileWriter *os.File
-	var loggerInstance *log.Logger = log.Default()
 
 	if logFile != "" {
 		var err error
@@ -223,7 +222,6 @@ func run(cmd *cobra.Command, args []string) {
 		strippedWriter := &util.AnsiStripper{Writer: logFileWriter}
 		// 设置全局默认 Logger 的输出，拦截主进程自身的 log.Printf
 		log.SetOutput(strippedWriter)
-		loggerInstance = log.New(strippedWriter, "", log.LstdFlags)
 		
 		log.Printf("=== Smart Proxy 启动 (PID: %d) ===", os.Getpid())
 	}
@@ -325,7 +323,9 @@ func run(cmd *cobra.Command, args []string) {
 		restoreTerminal()
 		log.Printf("\n收到终止信号 (%v)，正在清理...", sig)
 		launcher.Stop()
-		proxyServer.Stop()
+		if proxyWorkerCmd.Process != nil {
+			proxyWorkerCmd.Process.Kill()
+		}
 		if logFileWriter != nil {
 			logFileWriter.Sync()
 		}
