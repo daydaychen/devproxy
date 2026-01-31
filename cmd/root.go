@@ -132,14 +132,20 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
+	rootCmd.Version = util.Version
+	rootCmd.SetVersionTemplate("smart-proxy version {{.Version}}\n")
+
 	rootCmd.Flags().StringArrayVar(&matchPatterns, "match", []string{}, "URL匹配规则 (可指定多次)")
 	rootCmd.Flags().StringArrayVar(&overwriteRules, "overwrite", []string{}, "请求头重写规则 (格式: header=value, 可指定多次)")
 	rootCmd.Flags().StringVar(&upstreamProxy, "upstream", "", "上游代理地址 (例: http://127.0.0.1:7890)")
 	rootCmd.Flags().IntVar(&port, "port", 0, "代理服务器端口 (默认随机分配)")
-	rootCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "详细日志输出")
+	rootCmd.Flags().BoolVarP(&verbose, "verbose", "V", false, "详细日志输出")
 	rootCmd.Flags().StringVar(&logFile, "log-file", "", "日志文件路径 (用于避免干扰交互式应用，如vim)")
 	rootCmd.Flags().StringVarP(&configFile, "config", "c", "", "配置文件路径 (支持 YAML 格式)")
+	// 添加 -v 作为 --version 的缩写
+	rootCmd.Flags().BoolP("version", "v", false, "查看版本号")
 }
+
 
 func run(cmd *cobra.Command, args []string) {
 	// 加载配置文件
@@ -147,6 +153,9 @@ func run(cmd *cobra.Command, args []string) {
 
 	var logFileWriter *os.File
 	var loggerInstance *log.Logger = log.Default()
+
+	var origStdout *os.File = os.Stdout
+	var origStderr *os.File = os.Stderr
 
 	if logFile != "" {
 		var err error
@@ -165,10 +174,11 @@ func run(cmd *cobra.Command, args []string) {
 		// 2. 创建一个独立的 logger 实例供代理使用
 		loggerInstance = log.New(strippedWriter, "", log.LstdFlags)
 		
-		// 3. 架构级修复：劫持底层 FD 2 (Stderr)
-		// 即使第三方库绕过 log 包直接写入 os.Stderr (FD 2)，也会被重定向到日志文件
-		if err := util.RedirectStderr(logFileWriter); err != nil {
-			log.Printf("警告: 无法重定向底层 Stderr: %v", err)
+		// 3. 架构级修复：物理劫持底层的 FD 1 和 FD 2
+		// 备份原始的终端输出流，供稍后的 PTY 使用
+		origStdout, origStderr, err = util.HijackStandardStreams(logFileWriter)
+		if err != nil {
+			log.Printf("警告: 无法重定向系统标准流: %v", err)
 		}
 
 		log.Printf("=== Smart Proxy 启动 (PID: %d) ===", os.Getpid())
@@ -228,11 +238,10 @@ func run(cmd *cobra.Command, args []string) {
 	launcher := process.NewProcessLauncher(targetCommand, targetArgs, proxyPort, verbose)
 
 	// 启动子进程
-	// 注意：我们不再将子进程的 Stdout/Stderr 记录到 logFile 中，
-	// 因为对于交互式应用，这会导致日志文件包含大量乱码和终端控制字符。
-	// logFile 现在仅用于记录代理服务器自身的请求/响应日志。
-	launcher.Stdout = os.Stdout
-	launcher.Stderr = os.Stderr
+	// 注意：我们使用劫持前的原始终端流 (origStdout/origStderr) 分配给进程启动器。
+	// 这样子进程的 UI 数据会直接写入终端，而父进程及其库产生的日志会被导向 logFile。
+	launcher.Stdout = origStdout
+	launcher.Stderr = origStderr
 	launcher.Stdin = os.Stdin
 
 	// 如果是交互式终端，进入 raw 模式以便子进程完全接管终端
@@ -245,7 +254,7 @@ func run(cmd *cobra.Command, args []string) {
 		} else {
 			// 在 Raw 模式下，如果日志直接输出到终端，需要处理 \n 变为 \r\n，否则会出现“阶梯状”缩进
 			if logFile == "" {
-				log.SetOutput(&util.CrLfFixer{Writer: os.Stderr})
+				log.SetOutput(&util.CrLfFixer{Writer: origStderr})
 			}
 		}
 	}
@@ -256,7 +265,7 @@ func run(cmd *cobra.Command, args []string) {
 			term.Restore(int(os.Stdin.Fd()), oldState)
 			// 如果之前切换到了 CrLfFixer，则恢复原始输出
 			if logFile == "" {
-				log.SetOutput(os.Stderr)
+				log.SetOutput(origStderr)
 			}
 			// 在恢复终端后，打印一个回车符，确保后续首行日志从第一列开始
 			fmt.Print("\r")
