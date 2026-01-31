@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/elazarl/goproxy"
@@ -178,18 +179,46 @@ func (s *ProxyServer) Start() error {
 
 // ShouldMITM 判断是否需要对该 host 进行 MITM
 func (s *ProxyServer) ShouldMITM(host string) bool {
-	// 目前判断逻辑：只要有任意一条规则的任意一个 Matcher 匹配该 host
-	// 注意：Matcher 是基于完整 URL 的，这里我们构造一个简单的 URL 进行匹配测试
-	testURL := fmt.Sprintf("https://%s/", host)
+	// 剥离端口号 (例如从 "example.com:443" 得到 "example.com")
+	domain := host
+	if pos := strings.Index(host, ":"); pos != -1 {
+		domain = host[:pos]
+	}
 
 	for _, rule := range s.Rules {
-		// 如果规则没有 Matcher 但有 Rewriter，说明是全局规则，应该 MITM
+		// 如果规则没有 Matcher 但有 Rewriter，说明是全局规则，必须 MITM
 		if len(rule.Matchers) == 0 && len(rule.Rewriters) > 0 {
 			return true
 		}
+
 		for _, matcher := range rule.Matchers {
-			if matcher.Match(testURL) {
+			// 如果是正则表达式匹配，由于无法预测，默认开启 MITM 以确保规则生效
+			if _, ok := matcher.(*RegexMatcher); ok {
 				return true
+			}
+
+			// 如果是字符串匹配
+			if sm, ok := matcher.(*StringMatcher); ok {
+				pattern := sm.Pattern
+				// 情况 1: 模式中直接包含当前域名 (如匹配 "google.com/api" 且 host 是 "google.com")
+				if strings.Contains(pattern, domain) {
+					return true
+				}
+				// 情况 2: 当前域名包含模式 (如匹配 "google" 且 host 是 "google.com")
+				if strings.Contains(domain, pattern) {
+					return true
+				}
+				// 情况 3: 模式看起来像是一个全局路径匹配 (如以 "/" 开头，或者是特定的文件名如 "api.json")
+				// 这种情况下我们无法在未解密前确定路径，所以必须解密。
+				if strings.HasPrefix(pattern, "/") || (!strings.Contains(pattern, ".") && strings.Contains(pattern, "/")) {
+					return true
+				}
+				
+				// 情况 4: 针对用户常见的特殊文件名匹配 (如 "api.json")
+				if !strings.Contains(pattern, "/") && strings.Contains(pattern, ".") && !strings.Contains(pattern, domain) {
+					// 如果模式带点但不是当前域名，它可能是一个路径后缀，保险起见开启 MITM
+					return true
+				}
 			}
 		}
 	}
