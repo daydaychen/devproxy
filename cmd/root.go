@@ -229,7 +229,10 @@ func run(cmd *cobra.Command, args []string) {
 		if err != nil {
 			log.Printf("无法设置终端为 Raw 模式: %v", err)
 		} else {
-			defer term.Restore(int(os.Stdin.Fd()), oldState)
+			// 在 Raw 模式下，如果日志直接输出到终端，需要处理 \n 变为 \r\n，否则会出现“阶梯状”缩进
+			if logFile == "" {
+				log.SetOutput(&util.CrLfFixer{Writer: os.Stderr})
+			}
 		}
 	}
 
@@ -237,8 +240,17 @@ func run(cmd *cobra.Command, args []string) {
 	restoreTerminal := func() {
 		if oldState != nil {
 			term.Restore(int(os.Stdin.Fd()), oldState)
+			// 如果之前切换到了 CrLfFixer，则恢复原始输出
+			if logFile == "" {
+				log.SetOutput(os.Stderr)
+			}
+			// 在恢复终端后，打印一个回车符，确保后续首行日志从第一列开始
+			fmt.Print("\r")
+			oldState = nil
 		}
 	}
+	// 确保程序退出时恢复终端
+	defer restoreTerminal()
 
 	// 启动子进程
 	if err := launcher.Start(); err != nil {

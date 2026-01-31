@@ -36,3 +36,30 @@ func (as *AnsiStripper) Write(p []byte) (n int, err error) {
 	// 返回原始 p 的长度，以符合 io.Writer 接口约定，防止上层错误
 	return len(p), err
 }
+
+// CrLfFixer 一个包装 Writer，将 \n 替换为 \r\n
+type CrLfFixer struct {
+	Writer io.Writer
+}
+
+// Write 实现 io.Writer 接口
+func (w *CrLfFixer) Write(p []byte) (n int, err error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+
+	var buf []byte
+	for i := 0; i < len(p); i++ {
+		if p[i] == '\n' {
+			// 如果 \n 前面没有 \r，则补充一个 \r
+			if i == 0 || p[i-1] != '\r' {
+				buf = append(buf, '\r')
+			}
+		}
+		buf = append(buf, p[i])
+	}
+
+	_, err = w.Writer.Write(buf)
+	// 返回原始 p 的长度
+	return len(p), err
+}
