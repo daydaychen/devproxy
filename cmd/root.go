@@ -253,19 +253,23 @@ func run(cmd *cobra.Command, args []string) {
 	// 等待信号
 	go func() {
 		sig := <-sigChan
+		restoreTerminal()
 		log.Printf("\n收到终止信号 (%v)，正在清理...", sig)
 		launcher.Stop()
 		proxyServer.Stop()
 		if logFileWriter != nil {
 			logFileWriter.Sync()
 		}
-		restoreTerminal()
 		os.Exit(0)
 	}()
 
 	// 等待子进程结束
+	err = launcher.Wait()
+	// 在打印任何结束日志前先恢复终端，避免 raw 模式导致的缩进问题
+	restoreTerminal()
+
 	var exitCode int
-	if err := launcher.Wait(); err != nil {
+	if err != nil {
 		log.Printf("子进程运行出错: %v", err)
 		if exitError, ok := err.(*exec.ExitError); ok {
 			exitCode = exitError.ExitCode()
@@ -278,8 +282,8 @@ func run(cmd *cobra.Command, args []string) {
 
 	log.Println("正在清理并退出...")
 	proxyServer.Stop()
-	
-	// 在退出前休眠极短时间，给 log 库一点时间处理最后的写入
+
+	// 在退出前给 log 库一点时间处理最后的写入
 	if logFileWriter != nil {
 		log.Println("=== Smart Proxy 结束 ===")
 		logFileWriter.Sync()
@@ -287,7 +291,6 @@ func run(cmd *cobra.Command, args []string) {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	restoreTerminal()
 	os.Exit(exitCode)
 }
 
