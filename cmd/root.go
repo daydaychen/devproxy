@@ -145,8 +145,9 @@ func run(cmd *cobra.Command, args []string) {
 	// 加载配置文件
 	loadConfig(cmd)
 
-	// 设置日志输出
 	var logFileWriter *os.File
+	var loggerInstance *log.Logger = log.Default()
+
 	if logFile != "" {
 		var err error
 		logFileWriter, err = os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
@@ -156,7 +157,14 @@ func run(cmd *cobra.Command, args []string) {
 		defer logFileWriter.Close()
 		
 		fmt.Printf("详细日志将输出到文件: %s (已过滤终端控制符)\n", logFile)
-		log.SetOutput(&util.AnsiStripper{Writer: logFileWriter})
+		
+		// 创建一个带剥离 ANSI 功能的 Writer
+		strippedWriter := &util.AnsiStripper{Writer: logFileWriter}
+		// 1. 设置全局默认 Logger 的输出，拦截所有第三方库的 log.Printf
+		log.SetOutput(strippedWriter)
+		// 2. 创建一个独立的 logger 实例供代理使用
+		loggerInstance = log.New(strippedWriter, "", log.LstdFlags)
+		
 		log.Printf("=== Smart Proxy 启动 (PID: %d) ===", os.Getpid())
 	}
 
@@ -173,7 +181,7 @@ func run(cmd *cobra.Command, args []string) {
 	}
 
 	// 创建代理服务器
-	proxyServer := proxy.NewProxyServer(proxyPort, upstreamProxy, verbose, nil) // nil 会让它使用 log.Default()
+	proxyServer := proxy.NewProxyServer(proxyPort, upstreamProxy, verbose, loggerInstance)
 
 	// 1. 处理默认规则 (命令行参数 + 配置文件顶层规则)
 	for _, pattern := range matchPatterns {
