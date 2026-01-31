@@ -65,6 +65,8 @@ func (s *ProxyServer) AddRewriter(rewriter *HeaderRewriter) {
 // Start 启动代理服务器
 func (s *ProxyServer) Start() error {
 	s.proxy = goproxy.NewProxyHttpServer()
+	// 重定向 goproxy 的日志到我们的 Logger
+	s.proxy.Logger = s.Logger
 	// 禁用 goproxy 内部过度详细且难以阅读的日志
 	s.proxy.Verbose = false
 
@@ -157,8 +159,9 @@ func (s *ProxyServer) Start() error {
 
 	// 启动HTTP服务器
 	s.server = &http.Server{
-		Addr:    fmt.Sprintf("127.0.0.1:%d", s.Port),
-		Handler: s.proxy,
+		Addr:     fmt.Sprintf("127.0.0.1:%d", s.Port),
+		Handler:  s.proxy,
+		ErrorLog: s.Logger,
 	}
 
 	s.Logger.Printf("代理服务器启动在 http://127.0.0.1:%d", s.Port)
