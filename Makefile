@@ -1,15 +1,15 @@
 .PHONY: build build-opt clean
 
 BINARY_NAME=smart-proxy
+VERSION=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+LDFLAGS=-X smart-proxy/pkg/util.Version=$(VERSION)
 
 build:
-	go build -o $(BINARY_NAME) main.go
+	go build -ldflags "$(LDFLAGS)" -o $(BINARY_NAME) main.go
 
 build-opt:
-	# -s: 禁用符号表 (Omit the symbol table and debug information)
-	# -w: 禁用 DWARF 生成 (Omit the DWARF symbol table)
-	# 从而减小生成的可执行文件体积
-	go build -ldflags="-s -w" -o $(BINARY_NAME) main.go
+	# -s: 禁用符号表, -w: 禁用 DWARF 生成, 减小体积
+	go build -ldflags="-s -w $(LDFLAGS)" -o $(BINARY_NAME) main.go
 
 release: build-opt
 	mkdir -p $(HOME)/.local/bin

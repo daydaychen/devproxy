@@ -161,8 +161,9 @@ smart-proxy --match "pypi.org" -- python3
 | `--overwrite` | - | 请求头重写（格式: `header=value`） | `--overwrite useragent=Bot` |
 | `--upstream` | - | 上游代理地址 | `--upstream http://127.0.0.1:7890` |
 | `--port` | - | 指定代理端口（默认随机） | `--port 8888` |
-| `--verbose` | `-v` | 详细日志输出 | `--verbose` |
+| `--verbose` | `-V` | 详细日志输出 | `--verbose` |
 | `--log-file` | - | 日志文件路径 | `--log-file proxy.log` |
+| `--version` | `-v` | 查看版本号 | `smart-proxy -v` |
 
 ### 请求头简写
 
