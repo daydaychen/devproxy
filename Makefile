@@ -12,8 +12,8 @@ build-opt:
 	go build -ldflags="-s -w" -o $(BINARY_NAME) main.go
 
 release: build-opt
-	mkdir -p $(HOME)/.local.bin
-	mv $(BINARY_NAME) $(HOME)/.local.bin/
+	mkdir -p $(HOME)/.local/bin
+	mv $(BINARY_NAME) $(HOME)/.local/bin/
 
 clean:
 	go clean
