@@ -14,6 +14,9 @@ var ansiRegex = regexp.MustCompile(`(?s)[\x1b\x9b](?:[[()#;?]*[0-9:;<=>?]*[!"#$%
 
 // StripAnsi 移除字符串中的 ANSI 转义序列
 func StripAnsi(s string) string {
+	if s == "" {
+		return ""
+	}
 	return ansiRegex.ReplaceAllString(s, "")
 }
 
@@ -24,8 +27,10 @@ type AnsiStripper struct {
 
 // Write 实现 io.Writer 接口
 func (as *AnsiStripper) Write(p []byte) (n int, err error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
 	// 移除后写入。
-	// 注意：虽然对大块数据不够完美（可能会切断跨块的转义序列），但对于普通日志记录已足够。
 	stripped := ansiRegex.ReplaceAll(p, []byte(""))
 	_, err = as.Writer.Write(stripped)
 	// 返回原始 p 的长度，以符合 io.Writer 接口约定，防止上层错误
