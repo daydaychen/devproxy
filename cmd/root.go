@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -144,6 +145,60 @@ func init() {
 	rootCmd.Flags().StringVarP(&configFile, "config", "c", "", "配置文件路径 (支持 YAML 格式)")
 	// 添加 -v 作为 --version 的缩写
 	rootCmd.Flags().BoolP("version", "v", false, "查看版本号")
+
+	rootCmd.AddCommand(proxyWorkerCmd)
+}
+
+var proxyWorkerCmd = &cobra.Command{
+	Use:    "__internal_proxy_worker",
+	Short:  "Internal proxy worker (do not use directly)",
+	Hidden: true,
+	Run:    runProxyWorker,
+}
+
+func runProxyWorker(cmd *cobra.Command, args []string) {
+	// 从环境变量加载配置
+	vStr := os.Getenv("SMART_PROXY_VERBOSE")
+	isVerbose := vStr == "true"
+	pStr := os.Getenv("SMART_PROXY_PORT")
+	pPort, _ := strconv.Atoi(pStr)
+	uProxy := os.Getenv("SMART_PROXY_UPSTREAM")
+
+	// 重新加载配置（为了匹配规则）
+	loadConfig(cmd)
+
+	// 创建代理服务器
+	log.SetPrefix("[PROXY-WORKER] ")
+	ps := proxy.NewProxyServer(pPort, uProxy, isVerbose, nil)
+
+	// 添加匹配器
+	for _, pattern := range matchPatterns {
+		ps.AddMatcher(proxy.NewStringMatcher(pattern))
+	}
+	for _, rule := range overwriteRules {
+		headerName, headerValue := parseOverwriteRule(rule)
+		ps.AddRewriter(proxy.NewHeaderRewriter(headerName, headerValue))
+	}
+
+	// 添加成组规则
+	for _, ruleCfg := range configRules {
+		pRule := &proxy.ProxyRule{Name: ruleCfg.Name}
+		for _, pattern := range ruleCfg.Match {
+			pRule.Matchers = append(pRule.Matchers, proxy.NewStringMatcher(pattern))
+		}
+		for k, v := range ruleCfg.Overwrite {
+			hN, hV := parseOverwriteRule(fmt.Sprintf("%s=%s", k, v))
+			pRule.Rewriters = append(pRule.Rewriters, proxy.NewHeaderRewriter(hN, hV))
+		}
+		ps.AddRule(pRule)
+	}
+
+	if err := ps.Start(); err != nil {
+		log.Fatalf("代理工作进程启动失败: %v", err)
+	}
+
+	// 阻塞等待
+	select {}
 }
 
 
@@ -153,9 +208,6 @@ func run(cmd *cobra.Command, args []string) {
 
 	var logFileWriter *os.File
 	var loggerInstance *log.Logger = log.Default()
-
-	var origStdout *os.File = os.Stdout
-	var origStderr *os.File = os.Stderr
 
 	if logFile != "" {
 		var err error
@@ -169,18 +221,10 @@ func run(cmd *cobra.Command, args []string) {
 		
 		// 创建一个带剥离 ANSI 功能的 Writer
 		strippedWriter := &util.AnsiStripper{Writer: logFileWriter}
-		// 1. 设置全局默认 Logger 的输出，拦截所有第三方库的 log.Printf
+		// 设置全局默认 Logger 的输出，拦截主进程自身的 log.Printf
 		log.SetOutput(strippedWriter)
-		// 2. 创建一个独立的 logger 实例供代理使用
 		loggerInstance = log.New(strippedWriter, "", log.LstdFlags)
 		
-		// 3. 架构级修复：物理劫持底层的 FD 1 和 FD 2
-		// 备份原始的终端输出流，供稍后的 PTY 使用
-		origStdout, origStderr, err = util.HijackStandardStreams(logFileWriter)
-		if err != nil {
-			log.Printf("警告: 无法重定向系统标准流: %v", err)
-		}
-
 		log.Printf("=== Smart Proxy 启动 (PID: %d) ===", os.Getpid())
 	}
 
@@ -196,41 +240,33 @@ func run(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	// 创建代理服务器
-	proxyServer := proxy.NewProxyServer(proxyPort, upstreamProxy, verbose, loggerInstance)
-
-	// 1. 处理默认规则 (命令行参数 + 配置文件顶层规则)
-	for _, pattern := range matchPatterns {
-		proxyServer.AddMatcher(proxy.NewStringMatcher(pattern))
-	}
-	for _, rule := range overwriteRules {
-		headerName, headerValue := parseOverwriteRule(rule)
-		proxyServer.AddRewriter(proxy.NewHeaderRewriter(headerName, headerValue))
-	}
-
-	// 2. 处理成组的规则
-	for _, ruleCfg := range configRules {
-		ruleName := ruleCfg.Name
-		if ruleName == "" {
-			ruleName = "named-rule"
-		}
-		pRule := &proxy.ProxyRule{Name: ruleName}
-		
-		for _, pattern := range ruleCfg.Match {
-			pRule.Matchers = append(pRule.Matchers, proxy.NewStringMatcher(pattern))
-		}
-		for k, v := range ruleCfg.Overwrite {
-			headerName, headerValue := parseOverwriteRule(fmt.Sprintf("%s=%s", k, v))
-			pRule.Rewriters = append(pRule.Rewriters, proxy.NewHeaderRewriter(headerName, headerValue))
-		}
-		proxyServer.AddRule(pRule)
+	// 架构级修复：启动一个独立的子进程来运行代理服务器
+	// 这提供了绝对的日志隔离，因为代理子进程的标准输出/错误在创建时就被重定向了
+	proxyWorkerCmd := exec.Command(os.Args[0], "__internal_proxy_worker")
+	proxyWorkerCmd.Env = append(os.Environ(), 
+		fmt.Sprintf("SMART_PROXY_PORT=%d", proxyPort),
+		fmt.Sprintf("SMART_PROXY_UPSTREAM=%s", upstreamProxy),
+		fmt.Sprintf("SMART_PROXY_VERBOSE=%v", verbose),
+	)
+	
+	// 关键：将代理进程的输出物理重定向到日志文件
+	if logFile != "" {
+		proxyWorkerCmd.Stdout = logFileWriter
+		proxyWorkerCmd.Stderr = logFileWriter
+	} else {
+		// 如果没指定日志文件，代理的输出被彻底静默，以防干扰 UI
+		proxyWorkerCmd.Stdout = nil
+		proxyWorkerCmd.Stderr = nil
 	}
 
-	// 启动代理服务器
-	if err := proxyServer.Start(); err != nil {
-		log.Fatalf("启动代理服务器失败: %v", err)
+	if err := proxyWorkerCmd.Start(); err != nil {
+		log.Fatalf("启动代理工作进程失败: %v", err)
 	}
-	defer proxyServer.Stop()
+	defer func() {
+		if proxyWorkerCmd.Process != nil {
+			proxyWorkerCmd.Process.Kill()
+		}
+	}()
 
 	// 创建进程启动器
 	targetCommand := args[0]
@@ -238,10 +274,8 @@ func run(cmd *cobra.Command, args []string) {
 	launcher := process.NewProcessLauncher(targetCommand, targetArgs, proxyPort, verbose)
 
 	// 启动子进程
-	// 注意：我们使用劫持前的原始终端流 (origStdout/origStderr) 分配给进程启动器。
-	// 这样子进程的 UI 数据会直接写入终端，而父进程及其库产生的日志会被导向 logFile。
-	launcher.Stdout = origStdout
-	launcher.Stderr = origStderr
+	launcher.Stdout = os.Stdout
+	launcher.Stderr = os.Stderr
 	launcher.Stdin = os.Stdin
 
 	// 如果是交互式终端，进入 raw 模式以便子进程完全接管终端
@@ -254,7 +288,7 @@ func run(cmd *cobra.Command, args []string) {
 		} else {
 			// 在 Raw 模式下，如果日志直接输出到终端，需要处理 \n 变为 \r\n，否则会出现“阶梯状”缩进
 			if logFile == "" {
-				log.SetOutput(&util.CrLfFixer{Writer: origStderr})
+				log.SetOutput(&util.CrLfFixer{Writer: os.Stderr})
 			}
 		}
 	}
@@ -265,7 +299,7 @@ func run(cmd *cobra.Command, args []string) {
 			term.Restore(int(os.Stdin.Fd()), oldState)
 			// 如果之前切换到了 CrLfFixer，则恢复原始输出
 			if logFile == "" {
-				log.SetOutput(origStderr)
+				log.SetOutput(os.Stderr)
 			}
 			// 在恢复终端后，打印一个回车符，确保后续首行日志从第一列开始
 			fmt.Print("\r")
@@ -316,7 +350,9 @@ func run(cmd *cobra.Command, args []string) {
 	}
 
 	log.Println("正在清理并退出...")
-	proxyServer.Stop()
+	if proxyWorkerCmd.Process != nil {
+		proxyWorkerCmd.Process.Kill()
+	}
 
 	// 在退出前给 log 库一点时间处理最后的写入
 	if logFileWriter != nil {
