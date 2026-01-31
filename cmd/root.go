@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"smart-proxy/pkg/config"
 	"smart-proxy/pkg/process"
@@ -14,6 +16,7 @@ import (
 	"smart-proxy/pkg/util"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 func loadConfig(cmd *cobra.Command) {
@@ -143,15 +146,17 @@ func run(cmd *cobra.Command, args []string) {
 	loadConfig(cmd)
 
 	// 设置日志输出
+	var logFileWriter *os.File
 	if logFile != "" {
-		f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		var err error
+		logFileWriter, err = os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if err != nil {
 			log.Fatalf("打开日志文件失败: %v", err)
 		}
-		defer f.Close()
+		defer logFileWriter.Close()
 		
-		fmt.Printf("详细日志将输出到文件: %s\n", logFile)
-		log.SetOutput(f)
+		fmt.Printf("详细日志将输出到文件: %s (已过滤终端控制符)\n", logFile)
+		log.SetOutput(&util.AnsiStripper{Writer: logFileWriter})
 		log.Printf("=== Smart Proxy 启动 (PID: %d) ===", os.Getpid())
 	}
 
@@ -168,7 +173,7 @@ func run(cmd *cobra.Command, args []string) {
 	}
 
 	// 创建代理服务器
-	proxyServer := proxy.NewProxyServer(proxyPort, upstreamProxy, verbose)
+	proxyServer := proxy.NewProxyServer(proxyPort, upstreamProxy, verbose, nil) // nil 会让它使用 log.Default()
 
 	// 1. 处理默认规则 (命令行参数 + 配置文件顶层规则)
 	for _, pattern := range matchPatterns {
@@ -209,7 +214,35 @@ func run(cmd *cobra.Command, args []string) {
 	launcher := process.NewProcessLauncher(targetCommand, targetArgs, proxyPort, verbose)
 
 	// 启动子进程
+	// 注意：我们不再将子进程的 Stdout/Stderr 记录到 logFile 中，
+	// 因为对于交互式应用，这会导致日志文件包含大量乱码和终端控制字符。
+	// logFile 现在仅用于记录代理服务器自身的请求/响应日志。
+	launcher.Stdout = os.Stdout
+	launcher.Stderr = os.Stderr
+	launcher.Stdin = os.Stdin
+
+	// 如果是交互式终端，进入 raw 模式以便子进程完全接管终端
+	var oldState *term.State
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		var err error
+		oldState, err = term.MakeRaw(int(os.Stdin.Fd()))
+		if err != nil {
+			log.Printf("无法设置终端为 Raw 模式: %v", err)
+		} else {
+			defer term.Restore(int(os.Stdin.Fd()), oldState)
+		}
+	}
+
+	// 统一恢复终端的辅助函数
+	restoreTerminal := func() {
+		if oldState != nil {
+			term.Restore(int(os.Stdin.Fd()), oldState)
+		}
+	}
+
+	// 启动子进程
 	if err := launcher.Start(); err != nil {
+		restoreTerminal()
 		log.Fatalf("启动子进程失败: %v", err)
 	}
 
@@ -217,21 +250,45 @@ func run(cmd *cobra.Command, args []string) {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	// 等待信号或进程结束
+	// 等待信号
 	go func() {
-		<-sigChan
-		log.Println("\n收到终止信号，正在清理...")
+		sig := <-sigChan
+		log.Printf("\n收到终止信号 (%v)，正在清理...", sig)
 		launcher.Stop()
 		proxyServer.Stop()
+		if logFileWriter != nil {
+			logFileWriter.Sync()
+		}
+		restoreTerminal()
 		os.Exit(0)
 	}()
 
 	// 等待子进程结束
+	var exitCode int
 	if err := launcher.Wait(); err != nil {
-		log.Printf("子进程退出: %v", err)
+		log.Printf("子进程运行出错: %v", err)
+		if exitError, ok := err.(*exec.ExitError); ok {
+			exitCode = exitError.ExitCode()
+		} else {
+			exitCode = 1
+		}
+	} else {
+		log.Println("子进程正常结束")
 	}
 
-	log.Println("子进程已结束，正在清理...")
+	log.Println("正在清理并退出...")
+	proxyServer.Stop()
+	
+	// 在退出前休眠极短时间，给 log 库一点时间处理最后的写入
+	if logFileWriter != nil {
+		log.Println("=== Smart Proxy 结束 ===")
+		logFileWriter.Sync()
+		// 稍微等待确保 OS 刷写完成
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	restoreTerminal()
+	os.Exit(exitCode)
 }
 
 // Execute 执行命令
