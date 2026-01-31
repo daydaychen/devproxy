@@ -1,0 +1,83 @@
+# golangci-lint 配置文件
+# https://golangci-lint.run/usage/configuration/
+
+run:
+  timeout: 5m
+  issues-exit-code: 1
+  tests: true
+  skip-dirs:
+    - vendor
+    - third_party
+
+output:
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - typecheck
+    - unused
+    - gofmt
+    - goimports
+    - misspell
+    - unconvert
+    - dupl
+    - goconst
+    - gocyclo
+    - gosec
+    - bodyclose
+    - noctx
+    - sqlclosecheck
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+
+  govet:
+    check-shadowing: true
+    enable-all: true
+
+  golint:
+    min-confidence: 0.8
+
+  goimports:
+    local-prefixes: smart-proxy
+
+  dupl:
+    threshold: 100
+
+  goconst:
+    min-len: 3
+    min-occurrences: 3
+
+  gocyclo:
+    min-complexity: 10
+
+  misspell:
+    locale: US
+
+  gosec:
+    excludes:
+      - G204  # Subprocess launched with function call as argument
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - dupl
+        - gosec
+
+    - path: examples/
+      linters:
+        - dupl
+
+  max-issues-per-linter: 50
+  max-same-issues: 3
+  new: false

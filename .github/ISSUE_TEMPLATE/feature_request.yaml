@@ -1,0 +1,52 @@
+name: Feature Request
+description: 提出新功能建议
+labels: ["enhancement"]
+body:
+
+  - type: markdown
+    attributes:
+      value: |
+        感谢你提出功能建议！请描述你希望添加的功能及其用途。
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 解决的问题
+      description: 你试图解决什么问题？当前有什么限制？
+      placeholder: 描述问题背景...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: 期望的解决方案
+      description: 你希望如何解决这个问题？
+      placeholder: 描述你期望的功能...
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 替代方案
+      description: 你考虑过其他解决方案吗？为什么首选这个方案？
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: 附加上下文
+      description: 添加任何其他上下文、截图或参考链接
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 贡献意愿
+      options:
+        - label: 我愿意为这个功能贡献代码
+        - label: 我可以帮助测试这个功能
+        - label: 我可以协助文档编写

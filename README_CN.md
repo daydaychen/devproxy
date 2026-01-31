@@ -8,7 +8,7 @@
 
 一个用 Go 实现的智能 MITM 代理工具，能够拦截并修改指定 URL 的 HTTP/HTTPS 请求。
 
-[English](README.md) | [中文](README_CN.md)
+[English](README.md) | 中文
 
 </div>
 
