@@ -1,4 +1,4 @@
-module smart-proxy
+module devproxy
 
 go 1.25.6
 

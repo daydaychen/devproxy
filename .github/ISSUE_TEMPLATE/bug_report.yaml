@@ -11,8 +11,8 @@ body:
   - type: input
     id: version
     attributes:
-      label: smart-proxy 版本
-      description: 可以通过运行 `smart-proxy --version` 获取版本号
+      label: devproxy 版本
+      description: 可以通过运行 `devproxy --version` 获取版本号
       placeholder: e.g., v1.0.0
     validations:
       required: true

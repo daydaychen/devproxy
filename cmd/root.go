@@ -12,10 +12,10 @@ import (
 	"syscall"
 	"time"
 
-	"smart-proxy/pkg/config"
-	"smart-proxy/pkg/process"
-	"smart-proxy/pkg/proxy"
-	"smart-proxy/pkg/util"
+	"devproxy/pkg/config"
+	"devproxy/pkg/process"
+	"devproxy/pkg/proxy"
+	"devproxy/pkg/util"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -25,10 +25,10 @@ func loadConfig(cmd *cobra.Command) {
 	// 收集所有配置源
 	var configFiles []string
 
-	// 1. 全局配置 (~/.config/smart-proxy/global.yaml)
+	// 1. 全局配置 (~/.config/devproxy/global.yaml)
 	home, err := os.UserHomeDir()
 	if err == nil {
-		globalPath := fmt.Sprintf("%s/.config/smart-proxy/global.yaml", home)
+		globalPath := fmt.Sprintf("%s/.config/devproxy/global.yaml", home)
 		if _, err := os.Stat(globalPath); err == nil {
 			configFiles = append(configFiles, globalPath)
 		}
@@ -40,7 +40,7 @@ func loadConfig(cmd *cobra.Command) {
 		configFiles = append(configFiles, configFile)
 	} else {
 		// 检查默认本地配置文件
-		defaults := []string{"smart-proxy.yaml", ".smart-proxy.yaml"}
+		defaults := []string{"devproxy.yaml", ".devproxy.yaml"}
 		for _, d := range defaults {
 			if _, err := os.Stat(d); err == nil {
 				configFiles = append(configFiles, d)
@@ -109,33 +109,33 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "smart-proxy [flags] -- <command> [args...]",
+	Use:   "devproxy [flags] -- <command> [args...]",
 	Short: "Smart Proxy - 智能MITM代理工具",
 	Long: `Smart Proxy 是一个智能的MITM代理工具，可以拦截并修改HTTP/HTTPS请求。
 它只代理启动的子进程流量，不影响系统其他进程。
 
 示例:
   # 使用配置文件
-  smart-proxy --config config.yaml -- node server.js
+  devproxy --config config.yaml -- node server.js
 
   # 基本用法
-  smart-proxy --match "domain.com/v1/api" --overwrite useragent=CustomUA -- node server.js
+  devproxy --match "domain.com/v1/api" --overwrite useragent=CustomUA -- node server.js
 
   # 带上游代理
-  smart-proxy --match "*.example.com" --overwrite useragent=Bot --upstream http://127.0.0.1:7890 -- node app.js
+  devproxy --match "*.example.com" --overwrite useragent=Bot --upstream http://127.0.0.1:7890 -- node app.js
 
   # 指定端口和详细日志
-  smart-proxy --port 8888 --match "/api/" --overwrite useragent=Test --verbose -- npm start
+  devproxy --port 8888 --match "/api/" --overwrite useragent=Test --verbose -- npm start
 
   # 运行交互式应用（如 vim）时，建议将 verbose 日志输出到文件
-  smart-proxy --verbose --log-file ./proxy.log -- vim test.js`,
+  devproxy --verbose --log-file ./proxy.log -- vim test.js`,
 	Args: cobra.MinimumNArgs(1),
 	Run:  run,
 }
 
 func init() {
 	rootCmd.Version = util.Version
-	rootCmd.SetVersionTemplate("smart-proxy version {{.Version}}\n")
+	rootCmd.SetVersionTemplate("devproxy version {{.Version}}\n")
 
 	rootCmd.Flags().StringArrayVar(&matchPatterns, "match", []string{}, "URL匹配规则 (可指定多次)")
 	rootCmd.Flags().StringArrayVar(&overwriteRules, "overwrite", []string{}, "请求头重写规则 (格式: header=value, 可指定多次)")
@@ -205,7 +205,6 @@ func runProxyWorker(cmd *cobra.Command, args []string) {
 	select {}
 }
 
-
 func run(cmd *cobra.Command, args []string) {
 	// 加载配置文件
 	loadConfig(cmd)
@@ -219,14 +218,14 @@ func run(cmd *cobra.Command, args []string) {
 			log.Fatalf("打开日志文件失败: %v", err)
 		}
 		defer logFileWriter.Close()
-		
+
 		fmt.Printf("详细日志将输出到文件: %s (已过滤终端控制符)\n", logFile)
-		
+
 		// 创建一个带剥离 ANSI 功能的 Writer
 		strippedWriter := &util.AnsiStripper{Writer: logFileWriter}
 		// 设置全局默认 Logger 的输出，拦截主进程自身的 log.Printf
 		log.SetOutput(strippedWriter)
-		
+
 		log.Printf("=== Smart Proxy 启动 (PID: %d) ===", os.Getpid())
 	}
 
@@ -245,12 +244,12 @@ func run(cmd *cobra.Command, args []string) {
 	// 架构级修复：启动一个独立的子进程来运行代理服务器
 	// 这提供了绝对的日志隔离，因为代理子进程的标准输出/错误在创建时就被重定向了
 	proxyWorkerCmd := exec.Command(os.Args[0], "__internal_proxy_worker")
-	proxyWorkerCmd.Env = append(os.Environ(), 
+	proxyWorkerCmd.Env = append(os.Environ(),
 		fmt.Sprintf("SMART_PROXY_PORT=%d", proxyPort),
 		fmt.Sprintf("SMART_PROXY_UPSTREAM=%s", upstreamProxy),
 		fmt.Sprintf("SMART_PROXY_VERBOSE=%v", verbose),
 	)
-	
+
 	// 关键：将代理进程的输出物理重定向到日志文件
 	if logFile != "" {
 		proxyWorkerCmd.Stdout = logFileWriter

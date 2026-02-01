@@ -12,6 +12,6 @@ rules:
 
 # 全局顶层规则
 overwrite:
-  X-Smart-Proxy: "v2"
+  X-DevProxy: "v2"
 
 verbose: true

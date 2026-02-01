@@ -1,12 +1,12 @@
 # Smart-Proxy 测试示例
 
-本目录包含用于测试 smart-proxy 的示例脚本。
+本目录包含用于测试 devproxy 的示例脚本。
 
 ## 示例 0: 配置文件模式 (推荐)
 
 使用配置文件可以避免冗长的命令行参数。
 
-### smart-proxy.yaml (成组规则)
+### devproxy.yaml (成组规则)
 
 ```yaml
 rules:
@@ -25,7 +25,7 @@ verbose: true
 
 **运行命令**:
 ```bash
-smart-proxy -- node examples/test-multiple.js
+devproxy -- node examples/test-multiple.js
 ```
 
 ## 示例 1: 简单的 HTTP 请求测试
@@ -53,7 +53,7 @@ http.get('http://httpbin.org/headers', (res) => {
 
 **运行命令**:
 ```bash
-smart-proxy --match "httpbin.org" --overwrite useragent=TestBot --verbose -- node examples/test-http.js
+devproxy --match "httpbin.org" --overwrite useragent=TestBot --verbose -- node examples/test-http.js
 ```
 
 ## 示例 2: HTTPS 请求测试
@@ -83,7 +83,7 @@ https.get('https://httpbin.org/headers', (res) => {
 
 **运行命令**:
 ```bash
-smart-proxy --match "httpbin.org" --overwrite useragent=SecureBot --verbose -- node examples/test-https.js
+devproxy --match "httpbin.org" --overwrite useragent=SecureBot --verbose -- node examples/test-https.js
 ```
 
 ## 示例 3: 多个请求测试
@@ -120,7 +120,7 @@ console.log('\n所有请求已发送，等待响应...');
 
 **运行命令**:
 ```bash
-smart-proxy --match "httpbin.org" --overwrite useragent=MultiBot --verbose -- node examples/test-multiple.js
+devproxy --match "httpbin.org" --overwrite useragent=MultiBot --verbose -- node examples/test-multiple.js
 ```
 
 ## 示例 4: 带上游代理的测试
@@ -128,7 +128,7 @@ smart-proxy --match "httpbin.org" --overwrite useragent=MultiBot --verbose -- no
 假设你本地有 Clash 运行在 7890 端口：
 
 ```bash
-smart-proxy \
+devproxy \
     --upstream http://127.0.0.1:7890 \
     --match "google.com" \
     --overwrite useragent=ProxyBot \
@@ -144,8 +144,8 @@ smart-proxy \
 # 正常请求（不通过代理）
 curl http://httpbin.org/headers
 
-# 通过 smart-proxy（应该看到修改后的 User-Agent）
-smart-proxy --match "httpbin.org" --overwrite useragent=MyCustomBot -- curl http://httpbin.org/headers
+# 通过 devproxy（应该看到修改后的 User-Agent）
+devproxy --match "httpbin.org" --overwrite useragent=MyCustomBot -- curl http://httpbin.org/headers
 ```
 
 对比两次输出，第二次的 `User-Agent` 应该是 `MyCustomBot`。

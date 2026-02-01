@@ -1,6 +1,6 @@
 <div align="center">
 
-# Smart Proxy
+# Dev Proxy
 
 [![Go Version](https://img.shields.io/badge/Go-1.25-blue?logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -37,25 +37,25 @@ go install github.com/daydaychen/smart-proxy@latest
 
 ```bash
 git clone https://github.com/daydaychen/smart-proxy.git
-cd smart-proxy
+cd devproxy
 make build
-./smart-proxy --help
+./devproxy --help
 ```
 
 ### 基本用法
 
 ```bash
-smart-proxy [flags] -- <command> [args...]
+devproxy [flags] -- <command> [args...]
 ```
 
 **最简单的示例:**
 
 ```bash
 # 使用命令行参数
-smart-proxy --match "httpbin.org" --overwrite useragent=MyBot -- curl http://httpbin.org/headers
+devproxy --match "httpbin.org" --overwrite useragent=MyBot -- curl http://httpbin.org/headers
 
 # 使用配置文件
-smart-proxy --config config.yaml -- curl http://httpbin.org/headers
+devproxy --config config.yaml -- curl http://httpbin.org/headers
 ```
 
 ## 📖 使用示例
@@ -64,8 +64,8 @@ smart-proxy --config config.yaml -- curl http://httpbin.org/headers
 
 这是推荐的使用方式，可以将常用规则持久化。支持多级配置，加载顺序及优先级如下（后者覆盖前者，但列表类配置会累加）：
 
-1. **全局配置**: `~/.config/smart-proxy/global.yaml` (存放通用规则)
-2. **目录配置**: 当前目录下的 `smart-proxy.yaml` 或 `.smart-proxy.yaml` (存放项目特定规则)
+1. **全局配置**: `~/.config/devproxy/global.yaml` (存放通用规则)
+2. **目录配置**: 当前目录下的 `devproxy.yaml` 或 `.devproxy.yaml` (存放项目特定规则)
 3. **显式配置**: 通过 `--config` 指定的文件 (优先级高于默认目录配置)
 4. **命令行参数**: 优先级最高。
 
@@ -94,13 +94,13 @@ overwrite:
 运行:
 
 ```bash
-smart-proxy -- node server.js  # 自动集成全局和当前的 smart-proxy.yaml
+devproxy -- node server.js  # 自动集成全局和当前的 devproxy.yaml
 ```
 
 ### 2. 基本代理 + UA 重写
 
 ```bash
-smart-proxy \
+devproxy \
     --match "example.com/api" \
     --overwrite useragent=CustomUA \
     -- node server.js
@@ -109,7 +109,7 @@ smart-proxy \
 ### 3. 多个匹配规则
 
 ```bash
-smart-proxy \
+devproxy \
     --match "domain1.com" \
     --match "domain2.com/v1" \
     --overwrite useragent=Bot/1.0 \
@@ -119,7 +119,7 @@ smart-proxy \
 ### 4. 使用上游代理（转发到 Clash）
 
 ```bash
-smart-proxy \
+devproxy \
     --upstream http://127.0.0.1:7890 \
     --match "google.com" \
     --overwrite useragent=ProxyBot \
@@ -129,7 +129,7 @@ smart-proxy \
 ### 5. 指定端口 + 详细日志
 
 ```bash
-smart-proxy \
+devproxy \
     --port 8888 \
     --match "/api/" \
     --overwrite useragent=Test \
@@ -140,7 +140,7 @@ smart-proxy \
 ### 6. 重写多个请求头
 
 ```bash
-smart-proxy \
+devproxy \
     --match "api.example.com" \
     --overwrite useragent=CustomBot \
     --overwrite referer=https://example.com \
@@ -152,13 +152,13 @@ smart-proxy \
 
 ```bash
 # 在代理环境下运行 vim
-smart-proxy --match "githubusercontent.com" --verbose -- vim
+devproxy --match "githubusercontent.com" --verbose -- vim
 
 # 在代理环境下运行交互式 bash
-smart-proxy --upstream http://127.0.0.1:7890 -- bash
+devproxy --upstream http://127.0.0.1:7890 -- bash
 
 # 在代理环境下运行 Python 交互式解释器
-smart-proxy --match "pypi.org" -- python3
+devproxy --match "pypi.org" -- python3
 ```
 
 ## ⚙️ 命令行参数
@@ -172,7 +172,7 @@ smart-proxy --match "pypi.org" -- python3
 | `--port` | - | 指定代理端口（默认随机） | `--port 8888` |
 | `--verbose` | `-V` | 详细日志输出 | `--verbose` |
 | `--log-file` | - | 日志文件路径 | `--log-file proxy.log` |
-| `--version` | `-v` | 查看版本号 | `smart-proxy -v` |
+| `--version` | `-v` | 查看版本号 | `devproxy -v` |
 
 ### 请求头简写
 
@@ -186,7 +186,7 @@ smart-proxy --match "pypi.org" -- python3
 
 ## 🔧 工作原理
 
-1. **启动代理服务器** - smart-proxy 在随机端口（或指定端口）启动 MITM 代理
+1. **启动代理服务器** - devproxy 在随机端口（或指定端口）启动 MITM 代理
 2. **注入环境变量** - 为子进程设置代理环境变量：
 
 ```bash
@@ -208,10 +208,10 @@ NODE_TLS_REJECT_UNAUTHORIZED=0
 
 ### 场景 1: 爬虫开发
 
-某些网站会检测 User-Agent，使用 smart-proxy 可以轻松修改：
+某些网站会检测 User-Agent，使用 devproxy 可以轻松修改：
 
 ```bash
-smart-proxy \
+devproxy \
     --match "target-site.com" \
     --overwrite useragent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
     -- node crawler.js
@@ -222,7 +222,7 @@ smart-proxy \
 需要在请求中添加特定的 Referer 或 Origin：
 
 ```bash
-smart-proxy \
+devproxy \
     --match "api.example.com" \
     --overwrite referer=https://example.com \
     --overwrite origin=https://example.com \
@@ -234,7 +234,7 @@ smart-proxy \
 通过上游代理切换 IP 地址，测试不同地区的 API 响应：
 
 ```bash
-smart-proxy \
+devproxy \
     --upstream http://127.0.0.1:7890 \
     --match "geo-api.com" \
     -- node test-geo.js
@@ -243,7 +243,7 @@ smart-proxy \
 ## 📁 项目结构
 
 ```
-smart-proxy/
+devproxy/
 ├── main.go                 # 程序入口
 ├── cmd/
 │   └── root.go            # 命令行定义和主逻辑
@@ -275,7 +275,7 @@ smart-proxy/
 ```bash
 # 克隆项目
 git clone https://github.com/daydaychen/smart-proxy.git
-cd smart-proxy
+cd devproxy
 
 # 安装依赖
 go mod download
@@ -290,7 +290,7 @@ golangci-lint run ./...
 make build
 
 # 运行
-./smart-proxy --help
+./devproxy --help
 ```
 
 ## 🐛 故障排查
@@ -299,7 +299,7 @@ make build
 
 如果遇到 SSL/TLS 证书错误，确保：
 
-- `NODE_TLS_REJECT_UNAUTHORIZED=0` 已设置（smart-proxy 会自动设置）
+- `NODE_TLS_REJECT_UNAUTHORIZED=0` 已设置（devproxy 会自动设置）
 - 如果是其他语言（Python、Ruby 等），可能需要额外配置
 
 ### 问题 2: 代理不生效

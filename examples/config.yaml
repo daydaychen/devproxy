@@ -1,9 +1,9 @@
-# Smart Proxy 示例配置文件
+# devproxy 示例配置文件
 match:
   - "google.com"
   - "github.com"
 overwrite:
-  - "User-Agent=SmartProxy/1.0"
+  - "User-Agent=devproxy/1.0"
   - "X-Custom-Header=HelloFromConfig"
 verbose: true
 # upstream: "http://127.0.0.1:7890"

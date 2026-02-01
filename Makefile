@@ -1,8 +1,8 @@
 .PHONY: build build-opt clean
 
-BINARY_NAME=smart-proxy
+BINARY_NAME=devproxy
 VERSION=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
-LDFLAGS=-X smart-proxy/pkg/util.Version=$(VERSION)
+LDFLAGS=-X devproxy/pkg/util.Version=$(VERSION)
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BINARY_NAME) main.go

@@ -2,7 +2,7 @@
 
 ## 问题描述
 
-在之前的实现中，当使用 smart-proxy 启动交互式应用（如 vim、bash、python 等）时，这些应用会在启动后无响应，无法接收用户输入。
+在之前的实现中，当使用 devproxy 启动交互式应用（如 vim、bash、python 等）时，这些应用会在启动后无响应，无法接收用户输入。
 
 ## 根本原因
 
@@ -68,26 +68,26 @@ if err := l.cmd.Process.Signal(syscall.SIGTERM); err != nil {
 
 1. **交互式编辑器**
    ```bash
-   ./smart-proxy -- vim myfile.txt
-   ./smart-proxy -- nano myfile.txt
+   ./devproxy -- vim myfile.txt
+   ./devproxy -- nano myfile.txt
    ```
 
 2. **交互式 Shell**
    ```bash
-   ./smart-proxy -- bash
-   ./smart-proxy -- zsh
+   ./devproxy -- bash
+   ./devproxy -- zsh
    ```
 
 3. **交互式解释器**
    ```bash
-   ./smart-proxy -- python3
-   ./smart-proxy -- node
-   ./smart-proxy -- irb  # Ruby REPL
+   ./devproxy -- python3
+   ./devproxy -- node
+   ./devproxy -- irb  # Ruby REPL
    ```
 
 4. **需要用户输入的程序**
    ```bash
-   ./smart-proxy -- bash -c 'read -p "输入: " x; echo "你输入了: $x"'
+   ./devproxy -- bash -c 'read -p "输入: " x; echo "你输入了: $x"'
    ```
 
 ### ✅ 保持正常工作的场景
@@ -95,9 +95,9 @@ if err := l.cmd.Process.Signal(syscall.SIGTERM); err != nil {
 所有非交互式应用仍然正常工作：
 
 ```bash
-./smart-proxy -- curl https://example.com
-./smart-proxy -- node server.js
-./smart-proxy -- npm start
+./devproxy -- curl https://example.com
+./devproxy -- node server.js
+./devproxy -- npm start
 ```
 
 ## 测试验证
@@ -109,11 +109,11 @@ if err := l.cmd.Process.Signal(syscall.SIGTERM); err != nil {
 ./test_fix.sh
 
 # 手动测试交互式 bash
-./smart-proxy -- bash
+./devproxy -- bash
 # 输入一些命令，然后 Ctrl+D 退出
 
 # 手动测试 vim
-./smart-proxy -- vim
+./devproxy -- vim
 # 测试编辑功能，输入 :q 退出
 ```
 
@@ -134,7 +134,7 @@ if err := l.cmd.Process.Signal(syscall.SIGTERM); err != nil {
 
 ### 为什么现在移除它？
 
-对于 smart-proxy 的使用场景：
+对于 devproxy 的使用场景：
 1. **交互式优先**: 用户需要与子进程交互比批量终止更重要
 2. **简单场景**: 大多数情况下子进程不会再创建复杂的子进程树
 3. **优雅终止**: 使用 SIGTERM 已经足够优雅地终止进程

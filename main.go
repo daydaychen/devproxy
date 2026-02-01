@@ -1,6 +1,6 @@
 package main
 
-import "smart-proxy/cmd"
+import "devproxy/cmd"
 
 func main() {
 	cmd.Execute()

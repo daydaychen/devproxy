@@ -1,12 +1,12 @@
 # 贡献指南
 
-感谢你考虑为 smart-proxy 贡献代码！本指南将帮助你了解如何参与项目贡献。
+感谢你考虑为 devproxy 贡献代码！本指南将帮助你了解如何参与项目贡献。
 
 ## 如何贡献
 
 ### 报告问题
 
-如果你发现 bug 或有新功能建议，请先搜索 [issues](https://github.com/yourusername/smart-proxy/issues) 确保问题未被报告。然后使用 issue 模板提交详细的报告，包括：
+如果你发现 bug 或有新功能建议，请先搜索 [issues](https://github.com/yourusername/devproxy/issues) 确保问题未被报告。然后使用 issue 模板提交详细的报告，包括：
 
 - 问题描述
 - 复现步骤
