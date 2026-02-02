@@ -88,11 +88,14 @@ func (l *ProcessLauncher) Wait() error {
 // Stop 停止子进程
 func (l *ProcessLauncher) Stop() error {
 	if l.conpty != nil {
-		cpty := l.conpty.(*conpty.ConPty)
-		cpty.Close() // Close 会终止进程
-		// 也可以显示 Kill
+		// Windows ConPTY 模式
+		// 不直接调用 cpty.Close()，因为它会立即关闭管道导致子进程遇到 "read fatal" 错误
+		// 而是通过杀掉进程，让 Wait() 检测到退出后进行清理
 		if l.cmd.Process != nil {
-			_ = l.cmd.Process.Kill()
+			if l.Verbose {
+				log.Printf("终止子进程 (PID: %d)", l.cmd.Process.Pid)
+			}
+			return l.cmd.Process.Kill()
 		}
 		return nil
 	}

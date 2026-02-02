@@ -74,9 +74,6 @@ func (l *ProcessLauncher) Stop() error {
 		log.Printf("终止子进程 (PID: %d)", l.cmd.Process.Pid)
 	}
 
-	if l.ptyFile != nil {
-		l.ptyFile.Close()
-	}
 
 	// 尝试优雅地终止进程 (Unix 使用 SIGTERM)
 	if err := l.cmd.Process.Signal(syscall.SIGTERM); err != nil {
