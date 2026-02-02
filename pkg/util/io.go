@@ -2,7 +2,6 @@ package util
 
 import (
 	"os"
-	"syscall"
 )
 
 // HijackStandardStreams 将标准输出和标准错误重定向到指定文件，并返回原始的输出流
@@ -13,11 +12,11 @@ func HijackStandardStreams(f *os.File) (origStdout *os.File, origStderr *os.File
 	}
 
 	// 1. 备份原始的 FD 1 和 FD 2
-	stdoutFd, err := syscall.Dup(int(os.Stdout.Fd()))
+	stdoutFd, err := dup(int(os.Stdout.Fd()))
 	if err != nil {
 		return nil, nil, err
 	}
-	stderrFd, err := syscall.Dup(int(os.Stderr.Fd()))
+	stderrFd, err := dup(int(os.Stderr.Fd()))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -27,10 +26,10 @@ func HijackStandardStreams(f *os.File) (origStdout *os.File, origStderr *os.File
 
 	// 2. 将 FD 1 和 FD 2 物理重定向到日志文件
 	// 这样无论程序中哪里调用 fmt.Printf, log.Printf 甚至底层库直接写 FD 1/2，都会进文件
-	if err := syscall.Dup2(int(f.Fd()), int(os.Stdout.Fd())); err != nil {
+	if err := dup2(int(f.Fd()), int(os.Stdout.Fd())); err != nil {
 		return nil, nil, err
 	}
-	if err := syscall.Dup2(int(f.Fd()), int(os.Stderr.Fd())); err != nil {
+	if err := dup2(int(f.Fd()), int(os.Stderr.Fd())); err != nil {
 		return nil, nil, err
 	}
 
@@ -46,7 +45,7 @@ func RedirectStderr(f *os.File) error {
 	if f == nil {
 		return nil
 	}
-	err := syscall.Dup2(int(f.Fd()), int(os.Stderr.Fd()))
+	err := dup2(int(f.Fd()), int(os.Stderr.Fd()))
 	if err != nil {
 		return err
 	}

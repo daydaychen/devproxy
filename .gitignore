@@ -3,3 +3,4 @@ smart-proxy
 *.log
 *.pem
 *.key
+build

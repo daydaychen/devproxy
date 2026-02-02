@@ -289,6 +289,9 @@ golangci-lint run ./...
 # 编译
 make build
 
+# 交叉编译 (Linux, macOS, Windows)
+make cross-build
+
 # 运行
 ./devproxy --help
 ```
