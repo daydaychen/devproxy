@@ -18,7 +18,6 @@ import (
 	"devproxy/pkg/util"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 )
 
 func loadConfig(cmd *cobra.Command) {
@@ -284,40 +283,8 @@ func run(cmd *cobra.Command, args []string) {
 	launcher.Stderr = os.Stderr
 	launcher.Stdin = os.Stdin
 
-	// 如果是交互式终端，进入 raw 模式以便子进程完全接管终端
-	var oldState *term.State
-	if term.IsTerminal(int(os.Stdin.Fd())) {
-		var err error
-		oldState, err = term.MakeRaw(int(os.Stdin.Fd()))
-		if err != nil {
-			log.Printf("无法设置终端为 Raw 模式: %v", err)
-		} else {
-			// 在 Raw 模式下，如果日志直接输出到终端，需要处理 \n 变为 \r\n，否则会出现“阶梯状”缩进
-			if logFile == "" {
-				log.SetOutput(&util.CrLfFixer{Writer: os.Stderr})
-			}
-		}
-	}
-
-	// 统一恢复终端的辅助函数
-	restoreTerminal := func() {
-		if oldState != nil {
-			term.Restore(int(os.Stdin.Fd()), oldState)
-			// 如果之前切换到了 CrLfFixer，则恢复原始输出
-			if logFile == "" {
-				log.SetOutput(os.Stderr)
-			}
-			// 在恢复终端后，打印一个回车符，确保后续首行日志从第一列开始
-			fmt.Print("\r")
-			oldState = nil
-		}
-	}
-	// 确保程序退出时恢复终端
-	defer restoreTerminal()
-
 	// 启动子进程
 	if err := launcher.Start(); err != nil {
-		restoreTerminal()
 		log.Fatalf("启动子进程失败: %v", err)
 	}
 
@@ -331,7 +298,6 @@ func run(cmd *cobra.Command, args []string) {
 	// 等待信号
 	go func() {
 		sig := <-sigChan
-		restoreTerminal()
 		log.Printf("\n收到终止信号 (%v)，正在清理...", sig)
 		launcher.Stop()
 		if proxyWorkerCmd.Process != nil {
@@ -345,8 +311,6 @@ func run(cmd *cobra.Command, args []string) {
 
 	// 等待子进程结束
 	err = launcher.Wait()
-	// 在打印任何结束日志前先恢复终端，避免 raw 模式导致的缩进问题
-	restoreTerminal()
 
 	var exitCode int
 	if err != nil {

@@ -6,9 +6,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
-
-
-	"golang.org/x/term"
+	"syscall"
 )
 
 // ProcessLauncher 子进程启动器
@@ -21,8 +19,6 @@ type ProcessLauncher struct {
 	Stderr    io.Writer
 	Stdin     io.Reader
 	cmd       *exec.Cmd
-	ptyFile   *os.File
-	conpty    interface{} // Windows ConPTY instance
 }
 
 // NewProcessLauncher 创建新的进程启动器
@@ -61,18 +57,14 @@ func (l *ProcessLauncher) Start() error {
 		"BUN_CONFIG_SKIP_TLS_VERIFY=true",
 	)
 
-	// 检查是否为交互式模式 (Stdin 是否是 TTY)
-	if f, ok := l.Stdin.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
-		return l.startWithPty()
-	}
-
-	// 非交互式模式，使用普通方式
+	// 直接绑定标准输入输出
+	// Go 的 exec.Cmd 会正确处理这些流，即使是 TTY
 	l.cmd.Stdout = l.Stdout
 	l.cmd.Stderr = l.Stderr
 	l.cmd.Stdin = l.Stdin
 
 	if l.Verbose {
-		log.Printf("以普通模式启动进程: %s %v", l.Command, l.Args)
+		log.Printf("启动子进程: %s %v", l.Command, l.Args)
 	}
 
 	if err := l.cmd.Start(); err != nil {
@@ -80,5 +72,35 @@ func (l *ProcessLauncher) Start() error {
 	}
 
 	log.Printf("子进程已启动 (PID: %d)", l.cmd.Process.Pid)
+	return nil
+}
+
+// Wait 等待子进程结束
+func (l *ProcessLauncher) Wait() error {
+	if l.cmd == nil || l.cmd.Process == nil {
+		return fmt.Errorf("进程未启动")
+	}
+	return l.cmd.Wait()
+}
+
+// Stop 停止子进程
+func (l *ProcessLauncher) Stop() error {
+	if l.cmd == nil || l.cmd.Process == nil {
+		return nil
+	}
+
+	if l.Verbose {
+		log.Printf("终止子进程 (PID: %d)", l.cmd.Process.Pid)
+	}
+
+	// 尝试优雅地终止进程
+	// 注意：Windows 上没有 SIGTERM，Signal 会被转为 Kill
+	if err := l.cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		// 如果发送SIGTERM失败，强制杀死进程
+		if err := l.cmd.Process.Kill(); err != nil {
+			return fmt.Errorf("终止进程失败: %w", err)
+		}
+	}
+
 	return nil
 }
