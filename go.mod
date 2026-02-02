@@ -3,6 +3,7 @@ module devproxy
 go 1.25.6
 
 require (
+	github.com/UserExistsError/conpty v0.1.4 // indirect
 	github.com/creack/pty v1.1.24 // indirect
 	github.com/elazarl/goproxy v1.8.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect

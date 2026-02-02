@@ -50,3 +50,41 @@ func (l *ProcessLauncher) startWithPty() error {
 	log.Printf("子进程已在 PTY 启动 (PID: %d)", l.cmd.Process.Pid)
 	return nil
 }
+
+// Wait 等待子进程结束
+func (l *ProcessLauncher) Wait() error {
+	if l.cmd == nil || l.cmd.Process == nil {
+		return fmt.Errorf("进程未启动")
+	}
+	err := l.cmd.Wait()
+
+	if l.ptyFile != nil {
+		l.ptyFile.Close()
+	}
+	return err
+}
+
+// Stop 停止子进程
+func (l *ProcessLauncher) Stop() error {
+	if l.cmd == nil || l.cmd.Process == nil {
+		return nil
+	}
+
+	if l.Verbose {
+		log.Printf("终止子进程 (PID: %d)", l.cmd.Process.Pid)
+	}
+
+	if l.ptyFile != nil {
+		l.ptyFile.Close()
+	}
+
+	// 尝试优雅地终止进程 (Unix 使用 SIGTERM)
+	if err := l.cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		// 如果发送SIGTERM失败，强制杀死进程
+		if err := l.cmd.Process.Kill(); err != nil {
+			return fmt.Errorf("终止进程失败: %w", err)
+		}
+	}
+
+	return nil
+}
