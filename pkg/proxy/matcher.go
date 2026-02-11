@@ -36,10 +36,41 @@ type StringMatcher struct {
 
 // NewStringMatcher 创建字符串匹配器
 func NewStringMatcher(pattern string) *StringMatcher {
-	return &StringMatcher{Pattern: pattern}
+	return &StringMatcher{Pattern: NormalizeURL(pattern)}
 }
 
 // Match 检查URL是否包含指定字符串
 func (m *StringMatcher) Match(url string) bool {
-	return strings.Contains(url, m.Pattern)
+	return strings.Contains(NormalizeURL(url), m.Pattern)
+}
+
+// NormalizeURL 移除 URL 中的默认端口 (https:443, http:80) 以提高匹配兼容性。
+func NormalizeURL(u string) string {
+	if strings.HasPrefix(u, "https://") {
+		// 寻找 host 部分的结束位置
+		rest := u[8:]
+		slashIdx := strings.Index(rest, "/")
+		host := rest
+		path := ""
+		if slashIdx != -1 {
+			host = rest[:slashIdx]
+			path = rest[slashIdx:]
+		}
+		if strings.HasSuffix(host, ":443") {
+			return "https://" + strings.TrimSuffix(host, ":443") + path
+		}
+	} else if strings.HasPrefix(u, "http://") {
+		rest := u[7:]
+		slashIdx := strings.Index(rest, "/")
+		host := rest
+		path := ""
+		if slashIdx != -1 {
+			host = rest[:slashIdx]
+			path = rest[slashIdx:]
+		}
+		if strings.HasSuffix(host, ":80") {
+			return "http://" + strings.TrimSuffix(host, ":80") + path
+		}
+	}
+	return u
 }

@@ -113,6 +113,9 @@ func (s *ProxyServer) Start() error {
 			s.Logger.Printf("[REQUEST] %s %s", req.Method, reqURL)
 		}
 
+		// 标准化 URL 用于匹配
+		matchURL := NormalizeURL(reqURL)
+
 		for _, rule := range s.Rules {
 			matched := false
 			if len(rule.Matchers) == 0 {
@@ -121,7 +124,7 @@ func (s *ProxyServer) Start() error {
 				}
 			} else {
 				for _, matcher := range rule.Matchers {
-					if matcher.Match(reqURL) {
+					if matcher.Match(matchURL) {
 						matched = true
 						break
 					}
@@ -130,7 +133,7 @@ func (s *ProxyServer) Start() error {
 
 			if matched {
 				if s.Verbose {
-					s.Logger.Printf("[RULE:%s MATCHED] %s", rule.Name, reqURL)
+					s.Logger.Printf("[RULE:%s MATCHED] %s", rule.Name, matchURL)
 				}
 				for _, rewriter := range rule.Rewriters {
 					rewriter.Rewrite(req)
