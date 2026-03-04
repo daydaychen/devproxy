@@ -11,8 +11,10 @@ import (
 )
 
 // CodexFixPlugin 针对 Codex 客户端由于发出了包含对象数组的 messages 而导致的 validation errors 进行修复
-// 它会将 messages 中的 content 对象数组拼接为纯文本字符串
-type CodexFixPlugin struct{}
+// 它会将 messages 中的 content 对象数组拼接为纯文本字符串，并可选地替换 model 字段
+type CodexFixPlugin struct {
+	TargetModel string // 若不为空，则将请求中的 model 字段替换为此值
+}
 
 func (c *CodexFixPlugin) Name() string {
 	return "codex-fix"
@@ -104,9 +106,20 @@ func (c *CodexFixPlugin) ProcessRequest(req *http.Request) error {
 	return nil
 }
 
-// processPayload 在 map 中寻找并处理已知格式的消息数组
+// processPayload 在 map 中寻找并处理已知格式的消息数组，以及可选的 model 替换
 func (c *CodexFixPlugin) processPayload(p map[string]interface{}) bool {
 	modified := false
+
+	// 替换 model 字段
+	if c.TargetModel != "" {
+		if currentModel, ok := p["model"]; ok {
+			log.Printf("[codex-fix] 替换 model 字段: %v -> %s", currentModel, c.TargetModel)
+			p["model"] = c.TargetModel
+			modified = true
+		}
+	}
+
+	// 展平 content 数组
 	for _, field := range []string{"messages", "input", "history"} {
 		if val, ok := p[field]; ok {
 			if msgs, ok := val.([]interface{}); ok {

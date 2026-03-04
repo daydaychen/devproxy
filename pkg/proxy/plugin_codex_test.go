@@ -113,4 +113,21 @@ func TestCodexFixPlugin(t *testing.T) {
 			t.Errorf("Nested message content was not flattened: %s", string(modifiedBody))
 		}
 	})
+
+	t.Run("Model replacement support", func(t *testing.T) {
+		p := &CodexFixPlugin{TargetModel: "minimax-m21-ifind"}
+		reqBody := []byte(`{"model":"gpt-5.1-codex-mini","messages":[{"role":"user","content":"hello"}]}`)
+		req, _ := http.NewRequest(http.MethodPost, "http://example.com", bytes.NewReader(reqBody))
+		req.Header.Set("Content-Type", "application/json")
+
+		err := p.ProcessRequest(req)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		modifiedBody, _ := io.ReadAll(req.Body)
+		if !bytes.Contains(modifiedBody, []byte(`"model":"minimax-m21-ifind"`)) {
+			t.Errorf("Model was not replaced: %s", string(modifiedBody))
+		}
+	})
 }

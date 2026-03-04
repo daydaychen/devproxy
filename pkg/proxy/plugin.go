@@ -3,6 +3,7 @@ package proxy
 import (
 	"fmt"
 	"net/http"
+	"strings"
 )
 
 // RequestPlugin 定义了一类可以在请求发送到上游前修改 *http.Request 的插件
@@ -26,8 +27,21 @@ func RegisterPlugin(plugin RequestPlugin) {
 	pluginRegistry[plugin.Name()] = plugin
 }
 
-// GetPlugin 根据名称获取插件实例
-func GetPlugin(name string) (RequestPlugin, error) {
+// GetPlugin 根据名称获取插件实例，支持 "name:param" 格式
+func GetPlugin(fullName string) (RequestPlugin, error) {
+	name := fullName
+	param := ""
+	if strings.Contains(fullName, ":") {
+		parts := strings.SplitN(fullName, ":", 2)
+		name = parts[0]
+		param = parts[1]
+	}
+
+	// 针对 codex-fix 的特殊处理：支持参数化实例
+	if name == "codex-fix" && param != "" {
+		return &CodexFixPlugin{TargetModel: param}, nil
+	}
+
 	p, ok := pluginRegistry[name]
 	if !ok {
 		return nil, fmt.Errorf("插件 %s 未找到", name)
