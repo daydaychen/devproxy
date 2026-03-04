@@ -59,11 +59,12 @@ type ResponsesAPIEvent struct {
 	Type             string                `json:"type"`
 	ResponseID       string                `json:"response_id,omitempty"`
 	ItemID           string                `json:"item_id,omitempty"`
-	OutputItem       *Item                 `json:"output_item,omitempty"`
+	Item             *Item                 `json:"item,omitempty"`
 	ContentPart      *ContentPart          `json:"content_part,omitempty"`
 	ContentPartIndex int                   `json:"content_part_index,omitempty"`
 	Delta            string                `json:"delta,omitempty"`
 	SequenceNumber   int                   `json:"sequence_number,omitempty"`
+	OutputIndex      int                   `json:"output_index"`
 	Usage            interface{}           `json:"usage,omitempty"`
 	Response         *ResponsesAPIResponse `json:"response,omitempty"`
 }
@@ -85,11 +86,14 @@ type ResponsesAPIResponse struct {
 }
 
 type Item struct {
-	ID      string    `json:"id"`
-	Type    string    `json:"type"`
-	Status  string    `json:"status,omitempty"`
-	Role    string    `json:"role,omitempty"`
-	Content []Content `json:"content,omitempty"`
+	ID        string    `json:"id"`
+	Type      string    `json:"type"` // "message" or "function_call"
+	Status    string    `json:"status,omitempty"`
+	Role      string    `json:"role,omitempty"`
+	Content   []Content `json:"content,omitempty"`
+	Name      string    `json:"name,omitempty"`
+	Arguments string    `json:"arguments,omitempty"`
+	CallID    string    `json:"call_id,omitempty"`
 }
 
 type Content struct {
@@ -220,16 +224,16 @@ func (p *OpenAIResponsesPlugin) handleStream(resp *http.Response, verbose bool) 
 	// 确保流式响应的头部正确
 	resp.ContentLength = -1
 	resp.Header.Del("Content-Length")
-	// 禁用缓存，确保实时性
+	// 禁用缓存和缓冲区，确保实时性
 	resp.Header.Set("Cache-Control", "no-cache")
 	resp.Header.Set("Connection", "keep-alive")
+	resp.Header.Set("X-Accel-Buffering", "no")
 
 	go func() {
 		defer originalBody.Close()
 		defer writer.Close()
 
-		// 使用 bufio.Reader 替代 Scanner，避免 64KB 行长限制
-		br := bufio.NewReaderSize(originalBody, 1024*1024) // 1MB buffer
+		br := bufio.NewReaderSize(originalBody, 1024*1024)
 		var responseID string
 		var itemID string
 		var seqNum int
@@ -240,116 +244,133 @@ func (p *OpenAIResponsesPlugin) handleStream(resp *http.Response, verbose bool) 
 		var completedSent bool
 		for {
 			line, err := br.ReadString('\n')
-			// 即使有 err (如 io.EOF)，ReadString 也可能返回已读取的数据
-			// 处理当前行
 			trimmedLine := strings.TrimRight(line, "\r\n")
 			
 			if trimmedLine == "" && line != "" {
-				// 这是一个空行，SSE 事件分隔符，原样转发
 				writer.Write([]byte("\n"))
 			} else if trimmedLine != "" {
 				if strings.HasPrefix(trimmedLine, "data: ") {
 					data := strings.TrimPrefix(trimmedLine, "data: ")
 					if data == "[DONE]" {
-						// 收到 [DONE] 时，如果还没发送完成事件，先补发
 						if !completedSent && responseID != "" {
 							p.sendCompletionEvents(writer, responseID, itemID, createdAt, model, fullContent.String(), nil)
 							completedSent = true
 						}
 						writer.Write([]byte("data: [DONE]\n\n"))
 					} else {
-						var chunk ChatCompletionChunk
-						if errUnmarshal := json.Unmarshal([]byte(data), &chunk); errUnmarshal != nil {
-							if verbose {
-								log.Printf("[openai-responses] 流式 chunk 解析失败 (原样转发): %v", errUnmarshal)
-							}
-							writer.Write([]byte(trimmedLine + "\n\n"))
-						} else {
-							if responseID == "" {
-								responseID = strings.Replace(chunk.ID, "chatcmpl-", "resp_", 1)
-								itemID = fmt.Sprintf("msg_%s_0", responseID)
-								createdAt = chunk.Created
-								model = chunk.Model
-								
-								// 1. response.created
-								p.writeEvent(writer, "response.created", ResponsesAPIEvent{
-									Type:       "response.created",
-									ResponseID: responseID,
-									Response: &ResponsesAPIResponse{
-										ID:        responseID,
-										Object:    "response",
-										CreatedAt: createdAt,
-										Model:     model,
-									},
-								})
-								// 2. response.output_item.added
-								p.writeEvent(writer, "response.output_item.added", ResponsesAPIEvent{
-									Type:       "response.output_item.added",
-									ResponseID: responseID,
-									OutputItem: &Item{
-										ID:     itemID,
-										Type:   "message",
-										Status: "in_progress",
-										Role:   "assistant",
-									},
-								})
-								// 3. response.content_part.added
-								p.writeEvent(writer, "response.content_part.added", ResponsesAPIEvent{
-									Type:       "response.content_part.added",
-									ResponseID: responseID,
-									ItemID:     itemID,
-									ContentPart: &ContentPart{
-										Type:  "output_text",
-										Index: 0,
-									},
-								})
+						// 1. 首先尝试检测是否已经是 Responses API 格式 (含有 "type":)
+						if strings.Contains(data, "\"type\":\"") {
+							// 手动提取类型以保留所有原始字段 (避免 Unmarshal 丢弃未知字段)
+							eventType := "message"
+							if typeIdx := strings.Index(data, "\"type\":\""); typeIdx != -1 {
+								typeStart := typeIdx + 8
+								typeEnd := strings.Index(data[typeStart:], "\"")
+								if typeEnd != -1 {
+									eventType = data[typeStart : typeStart+typeEnd]
+								}
 							}
 
-							// 发送内容增量
-							if len(chunk.Choices) > 0 {
-								delta := chunk.Choices[0].Delta.Content
-								if delta != "" {
-									fullContent.WriteString(delta)
-									seqNum++
-									p.writeEvent(writer, "response.output_text.delta", ResponsesAPIEvent{
-										Type:             "response.output_text.delta",
-										ResponseID:       responseID,
-										ItemID:           itemID,
-										ContentPartIndex: 0,
-										Delta:            delta,
-										SequenceNumber:   seqNum,
+							if eventType == "response.completed" {
+								completedSent = true
+								// 核心修复：补全工具调用的生命周期事件
+								var compEvent ResponsesAPIEvent
+								if errJson := json.Unmarshal([]byte(data), &compEvent); errJson == nil && compEvent.Response != nil {
+									for i, item := range compEvent.Response.Output {
+										if item.Type == "function_call" {
+											// 确保 SDK 收到 added 和 done 事件
+											p.writeEvent(writer, "response.output_item.added", ResponsesAPIEvent{
+												Type:       "response.output_item.added",
+												ResponseID: responseID,
+												OutputIndex: i,
+												Item:       &item,
+											})
+											p.writeEvent(writer, "response.output_item.done", ResponsesAPIEvent{
+												Type:       "response.output_item.done",
+												ResponseID: responseID,
+												OutputIndex: i,
+												Item:       &item,
+											})
+										}
+									}
+								}
+							}
+
+							// 记录元数据用于兜底
+							if responseID == "" && strings.Contains(data, "\"id\":\"") {
+								idIdx := strings.Index(data, "\"id\":\"") + 6
+								idEnd := strings.Index(data[idIdx:], "\"")
+								if idEnd != -1 {
+									responseID = data[idIdx : idIdx+idEnd]
+								}
+							}
+
+							// 规范化：修正 object 字段 (手术级替换)
+							modifiedData := strings.Replace(data, "\"object\":\"chat.completion\"", "\"object\":\"response\"", 1)
+							
+							// 补全 event: 头部并转发原始 JSON (保留所有未知字段)
+							writer.Write([]byte(fmt.Sprintf("event: %s\ndata: %s\n\n", eventType, modifiedData)))
+						} else {
+							// 2. 降级尝试解析为标准 ChatCompletionChunk并转换
+							var chunk ChatCompletionChunk
+							if errUnmarshal := json.Unmarshal([]byte(data), &chunk); errUnmarshal == nil && len(chunk.ID) > 0 {
+								if responseID == "" {
+									responseID = strings.Replace(chunk.ID, "chatcmpl-", "resp_", 1)
+									itemID = fmt.Sprintf("msg_%s_0", responseID)
+									createdAt = chunk.Created
+									model = chunk.Model
+									
+									p.writeEvent(writer, "response.created", ResponsesAPIEvent{
+										Type: "response.created", ResponseID: responseID,
+										Response: &ResponsesAPIResponse{ID: responseID, Object: "response", CreatedAt: createdAt, Model: model},
+									})
+									p.writeEvent(writer, "response.output_item.added", ResponsesAPIEvent{
+										Type: "response.output_item.added", ResponseID: responseID,
+										OutputIndex: 0,
+										Item: &Item{ID: itemID, Type: "message", Status: "in_progress", Role: "assistant"},
+									})
+									p.writeEvent(writer, "response.content_part.added", ResponsesAPIEvent{
+										Type: "response.content_part.added", ResponseID: responseID, ItemID: itemID,
+										ContentPart: &ContentPart{Type: "output_text", Index: 0},
 									})
 								}
 
-								// 检查结束
-								if chunk.Choices[0].FinishReason != nil {
-									p.sendCompletionEvents(writer, responseID, itemID, createdAt, model, fullContent.String(), chunk.Usage)
-									completedSent = true
+								if len(chunk.Choices) > 0 {
+									delta := chunk.Choices[0].Delta.Content
+									if delta != "" {
+										fullContent.WriteString(delta)
+										seqNum++
+										p.writeEvent(writer, "response.output_text.delta", ResponsesAPIEvent{
+											Type: "response.output_text.delta", ResponseID: responseID, ItemID: itemID, Delta: delta, SequenceNumber: seqNum,
+										})
+									}
+									if chunk.Choices[0].FinishReason != nil {
+										p.sendCompletionEvents(writer, responseID, itemID, createdAt, model, fullContent.String(), chunk.Usage)
+										completedSent = true
+									}
 								}
+							} else {
+								// 兜底转发
+								writer.Write([]byte(trimmedLine + "\n\n"))
 							}
 						}
 					}
 				} else {
-					// 非 data 行 (如 event: 头部或其他注释)，原样转发
 					writer.Write([]byte(trimmedLine + "\n"))
 				}
 			}
 
 			if err != nil {
-				if err != io.EOF {
-					log.Printf("[openai-responses] 流读取错误: %v", err)
-				}
-				// 最终兜底：如果有未发送的 response.completed，在这里补发
 				if responseID != "" && !completedSent {
 					p.sendCompletionEvents(writer, responseID, itemID, createdAt, model, fullContent.String(), nil)
 					completedSent = true
+					writer.Write([]byte("data: [DONE]\n\n"))
 				}
 				break
 			}
 		}
 
 		if verbose {
-			log.Printf("[openai-responses] 流式转换完成: %s", responseID)
+			log.Printf("[openai-responses] 流式转换完成并关闭 Pipe: %s", responseID)
 		}
 	}()
 
@@ -386,7 +407,8 @@ func (p *OpenAIResponsesPlugin) sendCompletionEvents(w io.Writer, responseID, it
 	p.writeEvent(w, "response.output_item.done", ResponsesAPIEvent{
 		Type:       "response.output_item.done",
 		ResponseID: responseID,
-		OutputItem: &Item{
+		OutputIndex: 0,
+		Item: &Item{
 			ID:     itemID,
 			Type:   "message",
 			Status: "completed",
