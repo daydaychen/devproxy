@@ -94,12 +94,13 @@ func (c *CodexFixPlugin) ProcessRequest(req *http.Request) error {
 		return io.NopCloser(bytes.NewReader(newBodyBytes)), nil
 	}
 	req.Body, _ = req.GetBody()
+	
+	// 设置 ContentLength 数值，但移除 Header 级的显式设置，让 net/http 传输层自动处理
+	// 同时确保删除 Transfer-Encoding 以满足固定长度 Request 的规范
 	req.ContentLength = int64(len(newBodyBytes))
-	// 修改 Body 为固定长度后，必须移除可能存在的 Transfer-Encoding 头部，以解决与固定长度的冲突（解决 401/400 关键点）
 	req.Header.Del("Transfer-Encoding")
-	req.Header.Set("Content-Length", fmt.Sprintf("%d", len(newBodyBytes)))
 
-	log.Printf("[codex-fix] 请求已成功重写并重新包装 (新长度: %d)", len(newBodyBytes))
+	log.Printf("[codex-fix] 请求已成功重写并重新包装 (新长度: %d)", req.ContentLength)
 	return nil
 }
 

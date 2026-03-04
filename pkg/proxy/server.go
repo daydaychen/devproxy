@@ -160,13 +160,10 @@ func (s *ProxyServer) Start() error {
 				}
 				req.Body, _ = req.GetBody()
 				
-				// 关键点：一旦我们将 Body 缓冲，Request 就变成了固定长度请求。
-				// 我们需要立即同步 Content-Length 并清理冲突头部（特别针对 Electron/Chromium）
-				// 否则后端可能因为签名校验失败(401)或协议不一致(502)而拒绝请求。
+				// 关键点：同步状态，但减少人工 Header 干预，让 net/http 标准库处理
 				req.ContentLength = int64(len(body))
-				req.Header.Set("Content-Length", fmt.Sprintf("%d", req.ContentLength))
 				req.Header.Del("Transfer-Encoding")
-				req.Header.Del("Expect") // 既然 Body 已加载，删除 Expect 以防握手卡顿
+				req.Header.Del("Expect") 
 			}
 		}
 
@@ -188,7 +185,7 @@ func (s *ProxyServer) Start() error {
 				s.Logger.Printf("[RULE:%s MATCHED] %s", matchedRule.Name, matchURL)
 			}
 
-			// A. 执行插件 (插件内部如需修改 Body，其自身应负责同步 Headers)
+			// A. 执行插件 (插件内部如需修改 Body，其自身应负责同步 req.ContentLength)
 			for _, plugin := range matchedRule.Plugins {
 				err := plugin.ProcessRequest(req)
 				if s.Verbose {
@@ -216,6 +213,14 @@ func (s *ProxyServer) Start() error {
 	s.proxy.OnResponse().DoFunc(func(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
 		reqURL := ctx.Req.URL.String()
 		if resp != nil {
+			// 重点排查 401 错误的具体负载
+			if resp.StatusCode == http.StatusUnauthorized {
+				dump, err := httputil.DumpResponse(resp, true)
+				if err == nil {
+					s.Logger.Printf("[DIAGNOSTIC] 401 UNAUTHORIZED DETAIL (%s):\n%s", reqURL, string(dump))
+				}
+			}
+
 			if s.DumpTraffic && ctx.Req.Method != http.MethodConnect {
 				dump, err := httputil.DumpResponse(resp, true)
 				if err == nil {
