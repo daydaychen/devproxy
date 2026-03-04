@@ -43,8 +43,6 @@ func NewProxyServer(port int, upstream string, verbose bool, logger *log.Logger)
 		logger = log.Default()
 	}
 	defaultRule := &ProxyRule{Name: "default"}
-	// 默认禁用 Accept-Encoding 以确保插件能处理明文响应
-	defaultRule.Rewriters = append(defaultRule.Rewriters, NewHeaderRewriter("Accept-Encoding", "identity"))
 	return &ProxyServer{
 		Port:          port,
 		UpstreamProxy: upstream,

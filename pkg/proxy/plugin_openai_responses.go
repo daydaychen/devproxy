@@ -30,6 +30,13 @@ func (p *OpenAIResponsesPlugin) Name() string {
 	return "openai-responses"
 }
 
+// ProcessRequest 在请求发送前执行，确保上游返回明文以供插件处理
+func (p *OpenAIResponsesPlugin) ProcessRequest(req *http.Request) error {
+	// 针对 OpenAI 请求，强制要求明文响应，以便后续 ProcessResponse 处理
+	req.Header.Set("Accept-Encoding", "identity")
+	return nil
+}
+
 // ChatCompletionChunk 为 Chat Completion 流式响应块结构
 type ChatCompletionChunk struct {
 	ID      string `json:"id"`
