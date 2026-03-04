@@ -159,10 +159,18 @@ func (s *ProxyServer) Start() error {
 					return io.NopCloser(bytes.NewReader(body)), nil
 				}
 				req.Body, _ = req.GetBody()
+				
+				// 关键点：一旦我们将 Body 缓冲，Request 就变成了固定长度请求。
+				// 我们需要立即同步 Content-Length 并清理冲突头部（特别针对 Electron/Chromium）
+				// 否则后端可能因为签名校验失败(401)或协议不一致(502)而拒绝请求。
+				req.ContentLength = int64(len(body))
+				req.Header.Set("Content-Length", fmt.Sprintf("%d", req.ContentLength))
+				req.Header.Del("Transfer-Encoding")
+				req.Header.Del("Expect") // 既然 Body 已加载，删除 Expect 以防握手卡顿
 			}
 		}
 
-		// 4. 日志记录 (如果没读取 Body，DumpRequest 会自动只显示 Header)
+		// 4. 日志记录
 		if s.DumpTraffic && req.Method != http.MethodConnect {
 			dump, err := httputil.DumpRequest(req, needBody)
 			if err == nil {
@@ -171,7 +179,7 @@ func (s *ProxyServer) Start() error {
 				s.Logger.Printf("[REQUEST DUMP ERROR] %s %s: %v", req.Method, reqURL, err)
 			}
 		} else if s.Verbose {
-			s.Logger.Printf("[REQUEST] %s %s (Headers: %d)", req.Method, reqURL, len(req.Header))
+			s.Logger.Printf("[REQUEST] %s %s (Headers: %d, Length: %d)", req.Method, reqURL, len(req.Header), req.ContentLength)
 		}
 
 		// 5. 执行规则逻辑
@@ -180,7 +188,7 @@ func (s *ProxyServer) Start() error {
 				s.Logger.Printf("[RULE:%s MATCHED] %s", matchedRule.Name, matchURL)
 			}
 
-			// A. 执行插件 (插件内部应负责 Body 的修改及 Content-Length 的更新)
+			// A. 执行插件 (插件内部如需修改 Body，其自身应负责同步 Headers)
 			for _, plugin := range matchedRule.Plugins {
 				err := plugin.ProcessRequest(req)
 				if s.Verbose {
