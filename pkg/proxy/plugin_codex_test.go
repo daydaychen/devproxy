@@ -1,0 +1,116 @@
+package proxy
+
+import (
+	"bytes"
+	"io"
+	"net/http"
+	"strings"
+	"testing"
+)
+
+func TestCodexFixPlugin(t *testing.T) {
+	plugin := &CodexFixPlugin{}
+
+	t.Run("Ignore non-POST", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodGet, "http://example.com", nil)
+		err := plugin.ProcessRequest(req)
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+	})
+
+	t.Run("Ignore non-JSON", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodPost, "http://example.com", nil)
+		req.Header.Set("Content-Type", "text/plain")
+		err := plugin.ProcessRequest(req)
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+	})
+
+	t.Run("Codex output_text type array", func(t *testing.T) {
+		reqBody := []byte(`{
+			"messages": [
+				{
+					"role": "assistant",
+					"content": [
+						{"type": "output_text", "text": "thought... "},
+						{"type": "output_text", "text": "answer"}
+					]
+				}
+			]
+		}`)
+
+		req, _ := http.NewRequest(http.MethodPost, "http://example.com", bytes.NewReader(reqBody))
+		req.Header.Set("Content-Type", "application/json")
+
+		err := plugin.ProcessRequest(req)
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+
+		if req.GetBody == nil {
+			t.Fatal("Expected GetBody to be set")
+		}
+
+		modifiedBody, _ := io.ReadAll(req.Body)
+		sBody := strings.ReplaceAll(string(modifiedBody), " ", "")
+		sBody = strings.ReplaceAll(sBody, "\n", "")
+		
+		if !strings.Contains(sBody, `"content":"thought...answer"`) {
+			t.Errorf("Expected combined content, got: %s", string(modifiedBody))
+		}
+	})
+
+	t.Run("Input field support", func(t *testing.T) {
+		reqBody := []byte(`{
+			"input": [
+				{
+					"role": "assistant",
+					"content": [{"type": "text", "text": "I am thinking"}]
+				}
+			],
+			"model": "test-model"
+		}`)
+
+		req, _ := http.NewRequest(http.MethodPost, "http://example.com", bytes.NewReader(reqBody))
+		req.Header.Set("Content-Type", "application/json")
+
+		err := plugin.ProcessRequest(req)
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+
+		modifiedBody, _ := io.ReadAll(req.Body)
+		if !bytes.Contains(modifiedBody, []byte(`"content":"I am thinking"`)) {
+			t.Errorf("Input field content was not processed: %s", string(modifiedBody))
+		}
+	})
+
+	t.Run("Nested input support", func(t *testing.T) {
+		reqBody := []byte(`{
+			"input": {
+				"messages": [
+					{
+						"role": "assistant",
+						"type": "internal",
+						"content": [{"type": "output_text", "text": "result"}]
+					}
+				]
+			}
+		}`)
+
+		req, _ := http.NewRequest(http.MethodPost, "http://example.com", bytes.NewReader(reqBody))
+		req.Header.Set("Content-Type", "application/json")
+
+		err := plugin.ProcessRequest(req)
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+
+		modifiedBody, _ := io.ReadAll(req.Body)
+		if !bytes.Contains(modifiedBody, []byte(`"content":"result"`)) {
+			t.Errorf("Nested message content was not flattened: %s", string(modifiedBody))
+		}
+	})
+}

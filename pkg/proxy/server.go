@@ -1,10 +1,13 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"strings"
 	"time"
@@ -17,6 +20,7 @@ type ProxyRule struct {
 	Name      string
 	Matchers  []URLMatcher
 	Rewriters []*HeaderRewriter
+	Plugins   []RequestPlugin
 }
 
 // ProxyServer MITM代理服务器
@@ -25,6 +29,7 @@ type ProxyServer struct {
 	UpstreamProxy string
 	Rules         []*ProxyRule
 	Verbose       bool
+	DumpTraffic   bool
 	Logger        *log.Logger
 	proxy         *goproxy.ProxyHttpServer
 	server        *http.Server
@@ -60,6 +65,11 @@ func (s *ProxyServer) AddMatcher(matcher URLMatcher) {
 // AddRewriter 添加请求头重写器 (添加到默认规则)
 func (s *ProxyServer) AddRewriter(rewriter *HeaderRewriter) {
 	s.defaultRule.Rewriters = append(s.defaultRule.Rewriters, rewriter)
+}
+
+// AddPlugin 添加请求插件 (添加到默认规则)
+func (s *ProxyServer) AddPlugin(plugin RequestPlugin) {
+	s.defaultRule.Plugins = append(s.defaultRule.Plugins, plugin)
 }
 
 // Start 启动代理服务器
@@ -109,17 +119,17 @@ func (s *ProxyServer) Start() error {
 			reqURL = fmt.Sprintf("%s://%s%s", scheme, req.Host, req.URL.Path)
 		}
 
-		if s.Verbose {
-			s.Logger.Printf("[REQUEST] %s %s", req.Method, reqURL)
-		}
-
-		// 标准化 URL 用于匹配
+		// 1. 标准化 URL 用于匹配
 		matchURL := NormalizeURL(reqURL)
 
+		// 2. 预判是否需要读取/缓存 Body
+		// 严重警告：为了保护 Passthrough (直连) 请求不被中断（特别是流式请求），
+		// 我们【仅】在匹配了带有插件且需要修改 Body 的规则时才读取 Body。
+		var matchedRule *ProxyRule
 		for _, rule := range s.Rules {
 			matched := false
 			if len(rule.Matchers) == 0 {
-				if len(rule.Rewriters) > 0 {
+				if len(rule.Rewriters) > 0 || len(rule.Plugins) > 0 {
 					matched = true
 				}
 			} else {
@@ -130,16 +140,63 @@ func (s *ProxyServer) Start() error {
 					}
 				}
 			}
-
 			if matched {
-				if s.Verbose {
-					s.Logger.Printf("[RULE:%s MATCHED] %s", rule.Name, matchURL)
+				matchedRule = rule
+				break
+			}
+		}
+
+		needBody := false
+		if matchedRule != nil && len(matchedRule.Plugins) > 0 {
+			needBody = true
+		}
+
+		// 3. 按需读取并恢复 Body (仅为插件服务)
+		if needBody && req.Body != nil && req.Body != http.NoBody {
+			body, err := io.ReadAll(req.Body)
+			if err == nil {
+				req.GetBody = func() (io.ReadCloser, error) {
+					return io.NopCloser(bytes.NewReader(body)), nil
 				}
-				for _, rewriter := range rule.Rewriters {
-					rewriter.Rewrite(req)
-					if s.Verbose {
-						s.Logger.Printf("[RULE:%s REWRITE] %s -> %s", rule.Name, rewriter.HeaderName, rewriter.HeaderValue)
+				req.Body, _ = req.GetBody()
+			}
+		}
+
+		// 4. 日志记录 (如果没读取 Body，DumpRequest 会自动只显示 Header)
+		if s.DumpTraffic && req.Method != http.MethodConnect {
+			dump, err := httputil.DumpRequest(req, needBody)
+			if err == nil {
+				s.Logger.Printf("[REQUEST DUMP] %s %s\n%s", req.Method, reqURL, string(dump))
+			} else {
+				s.Logger.Printf("[REQUEST DUMP ERROR] %s %s: %v", req.Method, reqURL, err)
+			}
+		} else if s.Verbose {
+			s.Logger.Printf("[REQUEST] %s %s (Headers: %d)", req.Method, reqURL, len(req.Header))
+		}
+
+		// 5. 执行规则逻辑
+		if matchedRule != nil {
+			if s.Verbose {
+				s.Logger.Printf("[RULE:%s MATCHED] %s", matchedRule.Name, matchURL)
+			}
+
+			// A. 执行插件 (插件内部应负责 Body 的修改及 Content-Length 的更新)
+			for _, plugin := range matchedRule.Plugins {
+				err := plugin.ProcessRequest(req)
+				if s.Verbose {
+					if err != nil {
+						s.Logger.Printf("[RULE:%s PLUGIN ERROR] %s: %v", matchedRule.Name, plugin.Name(), err)
+					} else {
+						s.Logger.Printf("[RULE:%s PLUGIN APPLY] %s applied on %s", matchedRule.Name, plugin.Name(), matchURL)
 					}
+				}
+			}
+
+			// B. 执行重写逻辑
+			for _, rewriter := range matchedRule.Rewriters {
+				rewriter.Rewrite(req)
+				if s.Verbose {
+					s.Logger.Printf("[RULE:%s REWRITE] %s -> %s", matchedRule.Name, rewriter.HeaderName, rewriter.HeaderValue)
 				}
 			}
 		}
@@ -149,11 +206,20 @@ func (s *ProxyServer) Start() error {
 
 	// 设置响应拦截和日志
 	s.proxy.OnResponse().DoFunc(func(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
-		if s.Verbose {
-			reqURL := ctx.Req.URL.String()
-			if resp != nil {
+		reqURL := ctx.Req.URL.String()
+		if resp != nil {
+			if s.DumpTraffic && ctx.Req.Method != http.MethodConnect {
+				dump, err := httputil.DumpResponse(resp, true)
+				if err == nil {
+					s.Logger.Printf("[RESPONSE DUMP] %s %s -> %s\n%s", ctx.Req.Method, reqURL, resp.Status, string(dump))
+				} else {
+					s.Logger.Printf("[RESPONSE DUMP ERROR] %s %s: %v", ctx.Req.Method, reqURL, err)
+				}
+			} else if s.Verbose {
 				s.Logger.Printf("[RESPONSE] %s %s -> %s", ctx.Req.Method, reqURL, resp.Status)
-			} else {
+			}
+		} else {
+			if s.Verbose {
 				s.Logger.Printf("[RESPONSE ERROR] %s %s: 响应为空", ctx.Req.Method, reqURL)
 			}
 		}
@@ -194,8 +260,8 @@ func (s *ProxyServer) ShouldMITM(host string) bool {
 	}
 
 	for _, rule := range s.Rules {
-		// 如果规则没有 Matcher 但有 Rewriter，说明是全局规则，必须 MITM
-		if len(rule.Matchers) == 0 && len(rule.Rewriters) > 0 {
+		// 如果规则没有 Matcher 但有 Rewriter 或 Plugin，说明是全局规则，必须 MITM
+		if len(rule.Matchers) == 0 && (len(rule.Rewriters) > 0 || len(rule.Plugins) > 0) {
 			return true
 		}
 
