@@ -77,6 +77,11 @@ func loadConfig(cmd *cobra.Command) {
 				verbose = true
 			}
 		}
+		if !cmd.Flags().Changed("dump") {
+			if cfg.DumpTraffic {
+				dumpTraffic = true
+			}
+		}
 		if !cmd.Flags().Changed("log-file") && cfg.LogFile != "" {
 			logFile = cfg.LogFile
 		}
@@ -90,6 +95,9 @@ func loadConfig(cmd *cobra.Command) {
 				overwriteRules = append(overwriteRules, fmt.Sprintf("%s=%s", k, v))
 			}
 		}
+		if len(cfg.Plugins) > 0 {
+			pluginNames = append(pluginNames, cfg.Plugins...)
+		}
 		if len(cfg.Rules) > 0 {
 			configRules = append(configRules, cfg.Rules...)
 		}
@@ -100,9 +108,11 @@ var (
 	matchPatterns  []string
 	overwriteRules []string
 	configRules    []config.RuleConfig
+	pluginNames    []string
 	upstreamProxy  string
 	port           int
 	verbose        bool
+	dumpTraffic    bool
 	logFile        string
 	configFile     string
 )
@@ -138,9 +148,11 @@ func init() {
 
 	rootCmd.Flags().StringArrayVar(&matchPatterns, "match", []string{}, "URL匹配规则 (可指定多次)")
 	rootCmd.Flags().StringArrayVar(&overwriteRules, "overwrite", []string{}, "请求头重写规则 (格式: header=value, 可指定多次)")
+	rootCmd.Flags().StringArrayVar(&pluginNames, "plugin", []string{}, "请求处理插件 (如 codex-fix, 可指定多次)")
 	rootCmd.Flags().StringVar(&upstreamProxy, "upstream", "", "上游代理地址 (例: http://127.0.0.1:7890)")
 	rootCmd.Flags().IntVar(&port, "port", 0, "代理服务器端口 (默认随机分配)")
 	rootCmd.Flags().BoolVarP(&verbose, "verbose", "V", false, "详细日志输出")
+	rootCmd.Flags().BoolVar(&dumpTraffic, "dump", false, "输出完整的请求/响应头和正文 (用于详细调试)")
 	rootCmd.Flags().StringVar(&logFile, "log-file", "", "日志文件路径 (用于避免干扰交互式应用，如vim)")
 	rootCmd.Flags().StringVarP(&configFile, "config", "c", "", "配置文件路径 (支持 YAML 格式)")
 	// 添加 -v 作为 --version 的缩写
@@ -163,6 +175,8 @@ func runProxyWorker(cmd *cobra.Command, args []string) {
 	pStr := os.Getenv("SMART_PROXY_PORT")
 	pPort, _ := strconv.Atoi(pStr)
 	uProxy := os.Getenv("SMART_PROXY_UPSTREAM")
+	dStr := os.Getenv("SMART_PROXY_DUMP")
+	isDump := dStr == "true"
 
 	// 重新加载配置（为了匹配规则）
 	loadConfig(cmd)
@@ -170,6 +184,7 @@ func runProxyWorker(cmd *cobra.Command, args []string) {
 	// 创建代理服务器
 	log.SetPrefix("[PROXY-WORKER] ")
 	ps := proxy.NewProxyServer(pPort, uProxy, isVerbose, nil)
+	ps.DumpTraffic = isDump
 
 	// 添加匹配器
 	for _, pattern := range matchPatterns {
@@ -178,6 +193,14 @@ func runProxyWorker(cmd *cobra.Command, args []string) {
 	for _, rule := range overwriteRules {
 		headerName, headerValue := parseOverwriteRule(rule)
 		ps.AddRewriter(proxy.NewHeaderRewriter(headerName, headerValue))
+	}
+	for _, name := range pluginNames {
+		p, err := proxy.GetPlugin(name)
+		if err != nil {
+			log.Printf("加载全局插件 %s 失败: %v", name, err)
+		} else {
+			ps.AddPlugin(p)
+		}
 	}
 
 	// 添加成组规则
@@ -189,6 +212,14 @@ func runProxyWorker(cmd *cobra.Command, args []string) {
 		for k, v := range ruleCfg.Overwrite {
 			hN, hV := parseOverwriteRule(fmt.Sprintf("%s=%s", k, v))
 			pRule.Rewriters = append(pRule.Rewriters, proxy.NewHeaderRewriter(hN, hV))
+		}
+		for _, name := range ruleCfg.Plugins {
+			p, err := proxy.GetPlugin(name)
+			if err != nil {
+				log.Printf("规则 %s 加载插件 %s 失败: %v", ruleCfg.Name, name, err)
+			} else {
+				pRule.Plugins = append(pRule.Plugins, p)
+			}
 		}
 		ps.AddRule(pRule)
 	}
@@ -247,14 +278,19 @@ func run(cmd *cobra.Command, args []string) {
 		fmt.Sprintf("SMART_PROXY_PORT=%d", proxyPort),
 		fmt.Sprintf("SMART_PROXY_UPSTREAM=%s", upstreamProxy),
 		fmt.Sprintf("SMART_PROXY_VERBOSE=%v", verbose),
+		fmt.Sprintf("SMART_PROXY_DUMP=%v", dumpTraffic),
 	)
 
 	// 关键：将代理进程的输出物理重定向到日志文件
 	if logFile != "" {
 		proxyWorkerCmd.Stdout = logFileWriter
 		proxyWorkerCmd.Stderr = logFileWriter
+	} else if verbose || dumpTraffic {
+		// 如果开启了详细日志或流量转储，且未指定日志文件，则输出到终端
+		proxyWorkerCmd.Stdout = os.Stdout
+		proxyWorkerCmd.Stderr = os.Stderr
 	} else {
-		// 如果没指定日志文件，代理的输出被彻底静默，以防干扰 UI
+		// 如果没指定日志文件且非 verbose 模式，代理的输出被静默，以防干扰 UI
 		proxyWorkerCmd.Stdout = nil
 		proxyWorkerCmd.Stderr = nil
 	}
@@ -272,6 +308,7 @@ func run(cmd *cobra.Command, args []string) {
 	matchPatterns = nil
 	overwriteRules = nil
 	configRules = nil
+	pluginNames = nil
 
 	// 创建进程启动器
 	targetCommand := args[0]

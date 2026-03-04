@@ -19,6 +19,7 @@ type ProcessLauncher struct {
 	Stderr    io.Writer
 	Stdin     io.Reader
 	cmd       *exec.Cmd
+	cleanupCA func()
 }
 
 // NewProcessLauncher 创建新的进程启动器
@@ -38,9 +39,22 @@ func NewProcessLauncher(command string, args []string, proxyPort int, verbose bo
 func (l *ProcessLauncher) Start() error {
 	l.cmd = exec.Command(l.Command, l.Args...)
 
+	// 导出代理证书以便注入到子进程
+	caPath, cleanup, err := ExportProxyCA()
+	if err != nil {
+		if l.Verbose {
+			log.Printf("警告: 导出代理CA证书失败: %v, TLS连通性可能受影响", err)
+		}
+	} else {
+		l.cleanupCA = cleanup
+		if l.Verbose {
+			log.Printf("代理CA证书已导出至: %s", caPath)
+		}
+	}
+
 	// 继承当前环境变量，并添加代理配置
 	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", l.ProxyPort)
-	l.cmd.Env = append(os.Environ(),
+	envVars := []string{
 		fmt.Sprintf("HTTP_PROXY=%s", proxyURL),
 		fmt.Sprintf("HTTPS_PROXY=%s", proxyURL),
 		fmt.Sprintf("ALL_PROXY=%s", proxyURL),
@@ -52,10 +66,24 @@ func (l *ProcessLauncher) Start() error {
 		"npm_config_strict_ssl=false",
 		"yarn_strict_ssl=false",
 		"STRICT_SSL=false",
-		"NODE_EXTRA_CA_CERTS=",
 		"BUN_INSTALL_SKIP_TLS_CHECK=1",
 		"BUN_CONFIG_SKIP_TLS_VERIFY=true",
-	)
+	}
+
+	// 如果证书成功导出，则注入证书路径
+	// 用于支持严格验证证书的二进制或语言（Rust, Python, Node 纯净版等）
+	if caPath != "" {
+		envVars = append(envVars,
+			fmt.Sprintf("SSL_CERT_FILE=%s", caPath),          // Rust / Go / curl 等通用标准
+			fmt.Sprintf("REQUESTS_CA_BUNDLE=%s", caPath),     // Python requests 库
+			fmt.Sprintf("NODE_EXTRA_CA_CERTS=%s", caPath),    // Node.js 原生支持
+			fmt.Sprintf("CURL_CA_BUNDLE=%s", caPath),         // CURL
+		)
+	} else {
+		envVars = append(envVars, "NODE_EXTRA_CA_CERTS=")
+	}
+
+	l.cmd.Env = append(os.Environ(), envVars...)
 
 	// 直接绑定标准输入输出
 	// Go 的 exec.Cmd 会正确处理这些流，即使是 TTY
@@ -77,6 +105,7 @@ func (l *ProcessLauncher) Start() error {
 
 // Wait 等待子进程结束
 func (l *ProcessLauncher) Wait() error {
+	defer l.cleanTempFiles()
 	if l.cmd == nil || l.cmd.Process == nil {
 		return fmt.Errorf("进程未启动")
 	}
@@ -102,5 +131,14 @@ func (l *ProcessLauncher) Stop() error {
 		}
 	}
 
+	l.cleanTempFiles()
+
 	return nil
+}
+
+func (l *ProcessLauncher) cleanTempFiles() {
+	if l.cleanupCA != nil {
+		l.cleanupCA()
+		l.cleanupCA = nil
+	}
 }

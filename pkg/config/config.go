@@ -12,6 +12,7 @@ type RuleConfig struct {
 	Name      string            `yaml:"name"`
 	Match     []string          `yaml:"match"`
 	Overwrite map[string]string `yaml:"overwrite"`
+	Plugins   []string          `yaml:"plugins"`
 }
 
 // Config 配置文件结构
@@ -19,9 +20,11 @@ type Config struct {
 	Rules      []RuleConfig      `yaml:"rules"`
 	Match      []string          `yaml:"match"`
 	Overwrite  map[string]string `yaml:"overwrite"`
+	Plugins    []string          `yaml:"plugins"`
 	Upstream   string            `yaml:"upstream"`
 	Port       int               `yaml:"port"`
 	Verbose    bool              `yaml:"verbose"`
+	DumpTraffic bool             `yaml:"dump-traffic"`
 	LogFile    string            `yaml:"log-file"`
 }
 
