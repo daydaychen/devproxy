@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/elazarl/goproxy"
 )
 
 // RequestPlugin 定义了一类可以在请求发送到上游前修改 *http.Request 的插件
@@ -14,17 +16,34 @@ type RequestPlugin interface {
 	ProcessRequest(req *http.Request) error
 }
 
-// pluginRegistry 插件注册表
-var pluginRegistry = map[string]RequestPlugin{}
+// ResponsePlugin 定义了一类可以在响应返回客户端前修改 *http.Response 的插件
+type ResponsePlugin interface {
+	// Name 返回插件的名字
+	Name() string
+	// ProcessResponse 拦截并修改响应体。返回 error 则中断代理。
+	ProcessResponse(resp *http.Response, ctx *goproxy.ProxyCtx, verbose bool) error
+}
+
+// RequestPluginRegistry 请求插件注册表
+var RequestPluginRegistry = map[string]RequestPlugin{}
+
+// ResponsePluginRegistry 响应插件注册表
+var ResponsePluginRegistry = map[string]ResponsePlugin{}
 
 func init() {
 	// 注册内置插件
 	RegisterPlugin(&CodexFixPlugin{})
+	RegisterResponsePlugin(&OpenAIResponsesPlugin{})
 }
 
 // RegisterPlugin 注册一个请求插件
 func RegisterPlugin(plugin RequestPlugin) {
-	pluginRegistry[plugin.Name()] = plugin
+	RequestPluginRegistry[plugin.Name()] = plugin
+}
+
+// RegisterResponsePlugin 注册一个响应插件
+func RegisterResponsePlugin(plugin ResponsePlugin) {
+	ResponsePluginRegistry[plugin.Name()] = plugin
 }
 
 // GetPlugin 根据名称获取插件实例，支持 "name:param" 格式
@@ -42,9 +61,20 @@ func GetPlugin(fullName string) (RequestPlugin, error) {
 		return &CodexFixPlugin{TargetModel: param}, nil
 	}
 
-	p, ok := pluginRegistry[name]
+	p, ok := RequestPluginRegistry[name]
 	if !ok {
-		return nil, fmt.Errorf("插件 %s 未找到", name)
+		return nil, fmt.Errorf("请求插件 %s 未找到", name)
+	}
+	return p, nil
+}
+
+// GetResponsePlugin 根据名称获取响应插件实例
+func GetResponsePlugin(fullName string) (ResponsePlugin, error) {
+	name := fullName
+	// 目前不涉及参数化，后续如有需要可参照 GetPlugin
+	p, ok := ResponsePluginRegistry[name]
+	if !ok {
+		return nil, fmt.Errorf("响应插件 %s 未找到", name)
 	}
 	return p, nil
 }

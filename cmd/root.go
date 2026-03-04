@@ -98,6 +98,9 @@ func loadConfig(cmd *cobra.Command) {
 		if len(cfg.Plugins) > 0 {
 			pluginNames = append(pluginNames, cfg.Plugins...)
 		}
+		if len(cfg.ResponsePlugins) > 0 {
+			responsePluginNames = append(responsePluginNames, cfg.ResponsePlugins...)
+		}
 		if len(cfg.Rules) > 0 {
 			configRules = append(configRules, cfg.Rules...)
 		}
@@ -107,8 +110,9 @@ func loadConfig(cmd *cobra.Command) {
 var (
 	matchPatterns  []string
 	overwriteRules []string
-	configRules    []config.RuleConfig
-	pluginNames    []string
+	configRules         []config.RuleConfig
+	pluginNames         []string
+	responsePluginNames []string
 	upstreamProxy  string
 	port           int
 	verbose        bool
@@ -149,6 +153,7 @@ func init() {
 	rootCmd.Flags().StringArrayVar(&matchPatterns, "match", []string{}, "URL匹配规则 (可指定多次)")
 	rootCmd.Flags().StringArrayVar(&overwriteRules, "overwrite", []string{}, "请求头重写规则 (格式: header=value, 可指定多次)")
 	rootCmd.Flags().StringArrayVar(&pluginNames, "plugin", []string{}, "请求处理插件 (如 codex-fix, 可指定多次)")
+	rootCmd.Flags().StringArrayVar(&responsePluginNames, "response-plugin", []string{}, "响应处理插件 (可指定多次)")
 	rootCmd.Flags().StringVar(&upstreamProxy, "upstream", "", "上游代理地址 (例: http://127.0.0.1:7890)")
 	rootCmd.Flags().IntVar(&port, "port", 0, "代理服务器端口 (默认随机分配)")
 	rootCmd.Flags().BoolVarP(&verbose, "verbose", "V", false, "详细日志输出")
@@ -195,11 +200,29 @@ func runProxyWorker(cmd *cobra.Command, args []string) {
 		ps.AddRewriter(proxy.NewHeaderRewriter(headerName, headerValue))
 	}
 	for _, name := range pluginNames {
+		// 尝试作为请求插件加载
 		p, err := proxy.GetPlugin(name)
-		if err != nil {
-			log.Printf("加载全局插件 %s 失败: %v", name, err)
-		} else {
+		if err == nil {
 			ps.AddPlugin(p)
+			continue
+		}
+
+		// 尝试作为响应插件加载
+		rp, err := proxy.GetResponsePlugin(name)
+		if err == nil {
+			ps.AddResponsePlugin(rp)
+			continue
+		}
+
+		log.Printf("加载全局插件 %s 失败: 未在请求或响应插件注册表中找到", name)
+	}
+
+	for _, name := range responsePluginNames {
+		rp, err := proxy.GetResponsePlugin(name)
+		if err != nil {
+			log.Printf("加载全局响应插件 %s 失败: %v", name, err)
+		} else {
+			ps.AddResponsePlugin(rp)
 		}
 	}
 
@@ -214,11 +237,28 @@ func runProxyWorker(cmd *cobra.Command, args []string) {
 			pRule.Rewriters = append(pRule.Rewriters, proxy.NewHeaderRewriter(hN, hV))
 		}
 		for _, name := range ruleCfg.Plugins {
+			// 尝试作为请求插件加载
 			p, err := proxy.GetPlugin(name)
-			if err != nil {
-				log.Printf("规则 %s 加载插件 %s 失败: %v", ruleCfg.Name, name, err)
-			} else {
+			if err == nil {
 				pRule.Plugins = append(pRule.Plugins, p)
+				continue
+			}
+
+			// 尝试作为响应插件加载
+			rp, err := proxy.GetResponsePlugin(name)
+			if err == nil {
+				pRule.ResponsePlugins = append(pRule.ResponsePlugins, rp)
+				continue
+			}
+
+			log.Printf("规则 %s 加载插件 %s 失败: 未在请求或响应插件注册表中找到", ruleCfg.Name, name)
+		}
+		for _, name := range ruleCfg.ResponsePlugins {
+			rp, err := proxy.GetResponsePlugin(name)
+			if err != nil {
+				log.Printf("规则 %s 加载响应插件 %s 失败: %v", ruleCfg.Name, name, err)
+			} else {
+				pRule.ResponsePlugins = append(pRule.ResponsePlugins, rp)
 			}
 		}
 		ps.AddRule(pRule)

@@ -17,10 +17,11 @@ import (
 
 // ProxyRule 定义一组匹配规则及其对应的重写动作
 type ProxyRule struct {
-	Name      string
-	Matchers  []URLMatcher
-	Rewriters []*HeaderRewriter
-	Plugins   []RequestPlugin
+	Name            string
+	Matchers        []URLMatcher
+	Rewriters       []*HeaderRewriter
+	Plugins         []RequestPlugin
+	ResponsePlugins []ResponsePlugin
 }
 
 // ProxyServer MITM代理服务器
@@ -42,6 +43,8 @@ func NewProxyServer(port int, upstream string, verbose bool, logger *log.Logger)
 		logger = log.Default()
 	}
 	defaultRule := &ProxyRule{Name: "default"}
+	// 默认禁用 Accept-Encoding 以确保插件能处理明文响应
+	defaultRule.Rewriters = append(defaultRule.Rewriters, NewHeaderRewriter("Accept-Encoding", "identity"))
 	return &ProxyServer{
 		Port:          port,
 		UpstreamProxy: upstream,
@@ -70,6 +73,11 @@ func (s *ProxyServer) AddRewriter(rewriter *HeaderRewriter) {
 // AddPlugin 添加请求插件 (添加到默认规则)
 func (s *ProxyServer) AddPlugin(plugin RequestPlugin) {
 	s.defaultRule.Plugins = append(s.defaultRule.Plugins, plugin)
+}
+
+// AddResponsePlugin 添加响应插件 (添加到默认规则)
+func (s *ProxyServer) AddResponsePlugin(plugin ResponsePlugin) {
+	s.defaultRule.ResponsePlugins = append(s.defaultRule.ResponsePlugins, plugin)
 }
 
 // Start 启动代理服务器
@@ -213,6 +221,43 @@ func (s *ProxyServer) Start() error {
 	s.proxy.OnResponse().DoFunc(func(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
 		reqURL := ctx.Req.URL.String()
 		if resp != nil {
+			// 1. 标准化 URL 用于匹配
+			matchURL := NormalizeURL(reqURL)
+
+			// 2. 匹配规则
+			var matchedRule *ProxyRule
+			for _, rule := range s.Rules {
+				matched := false
+				if len(rule.Matchers) == 0 {
+					if len(rule.ResponsePlugins) > 0 {
+						matched = true
+					}
+				} else {
+					for _, matcher := range rule.Matchers {
+						if matcher.Match(matchURL) {
+							matched = true
+							break
+						}
+					}
+				}
+				if matched {
+					matchedRule = rule
+					break
+				}
+			}
+
+			// 3. 执行响应插件
+			if matchedRule != nil && len(matchedRule.ResponsePlugins) > 0 {
+				for _, plugin := range matchedRule.ResponsePlugins {
+					err := plugin.ProcessResponse(resp, ctx, s.Verbose)
+					if err != nil {
+						s.Logger.Printf("[RULE:%s RESPONSE PLUGIN ERROR] %s: %v", matchedRule.Name, plugin.Name(), err)
+					} else if s.Verbose {
+						s.Logger.Printf("[RULE:%s RESPONSE PLUGIN APPLY] %s applied on %s", matchedRule.Name, plugin.Name(), matchURL)
+					}
+				}
+			}
+
 			// 重点排查 401 错误的具体负载
 			if resp.StatusCode == http.StatusUnauthorized {
 				dump, err := httputil.DumpResponse(resp, true)
@@ -222,11 +267,17 @@ func (s *ProxyServer) Start() error {
 			}
 
 			if s.DumpTraffic && ctx.Req.Method != http.MethodConnect {
-				dump, err := httputil.DumpResponse(resp, true)
-				if err == nil {
-					s.Logger.Printf("[RESPONSE DUMP] %s %s -> %s\n%s", ctx.Req.Method, reqURL, resp.Status, string(dump))
+				// 跳过流式响应的 dump，避免消耗 io.Pipe body
+				contentType := resp.Header.Get("Content-Type")
+				if strings.Contains(contentType, "text/event-stream") {
+					s.Logger.Printf("[RESPONSE STREAM] %s %s -> %s (流式响应, 跳过 dump)", ctx.Req.Method, reqURL, resp.Status)
 				} else {
-					s.Logger.Printf("[RESPONSE DUMP ERROR] %s %s: %v", ctx.Req.Method, reqURL, err)
+					dump, err := httputil.DumpResponse(resp, true)
+					if err == nil {
+						s.Logger.Printf("[RESPONSE DUMP] %s %s -> %s\n%s", ctx.Req.Method, reqURL, resp.Status, string(dump))
+					} else {
+						s.Logger.Printf("[RESPONSE DUMP ERROR] %s %s: %v", ctx.Req.Method, reqURL, err)
+					}
 				}
 			} else if s.Verbose {
 				s.Logger.Printf("[RESPONSE] %s %s -> %s", ctx.Req.Method, reqURL, resp.Status)
