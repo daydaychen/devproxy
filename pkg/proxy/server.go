@@ -428,9 +428,33 @@ func (s *ProxyServer) ShouldMITM(host string) bool {
 	}
 
 	// O(n) 遍历：路径模式匹配（n 通常很小）
+	// 注意：这里需要检查域名是否匹配模式中的 host 部分
 	for _, sm := range s.mitmPatterns {
-		if sm.Match(domain) {
+		// sm.Pattern 可能是完整 URL 如 "https://host/path" 或纯路径 "/path"
+		pattern := sm.Pattern
+		if strings.HasPrefix(pattern, "https://") || strings.HasPrefix(pattern, "http://") {
+			// 提取模式中的 host 部分进行匹配
+			prefixLen := 8
+			if strings.HasPrefix(pattern, "http://") {
+				prefixLen = 7
+			}
+			rest := pattern[prefixLen:]
+			slashIdx := strings.Index(rest, "/")
+			if slashIdx != -1 {
+				patternHost := rest[:slashIdx]
+				// 检查域名是否匹配（精确匹配或后缀匹配）
+				if domain == patternHost || strings.HasSuffix(domain, "."+patternHost) || strings.HasSuffix(patternHost, "."+domain) {
+					return true
+				}
+			}
+		} else if strings.HasPrefix(pattern, "/") {
+			// 纯路径模式，无法在 CONNECT 阶段判断，默认开启 MITM
 			return true
+		} else {
+			// 其他模式，尝试子串匹配
+			if strings.Contains(domain, pattern) || strings.Contains(pattern, domain) {
+				return true
+			}
 		}
 	}
 
