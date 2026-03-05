@@ -113,9 +113,11 @@ func (c *CodexFixPlugin) processPayload(p map[string]interface{}) bool {
 	// 替换 model 字段
 	if c.TargetModel != "" {
 		if currentModel, ok := p["model"]; ok {
-			log.Printf("[codex-fix] 替换 model 字段: %v -> %s", currentModel, c.TargetModel)
-			p["model"] = c.TargetModel
-			modified = true
+			if currentModel != c.TargetModel {
+				log.Printf("[codex-fix] 替换 model 字段: %v -> %s", currentModel, c.TargetModel)
+				p["model"] = c.TargetModel
+				modified = true
+			}
 		}
 	}
 
