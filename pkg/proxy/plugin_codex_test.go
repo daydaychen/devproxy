@@ -130,4 +130,39 @@ func TestCodexFixPlugin(t *testing.T) {
 			t.Errorf("Model was not replaced: %s", string(modifiedBody))
 		}
 	})
+
+	t.Run("Ignore non-assistant role content", func(t *testing.T) {
+		reqBody := []byte(`{
+			"messages": [
+				{
+					"role": "user",
+					"content": [
+						{"type": "text", "text": "hello"},
+						{"type": "image_url", "image_url": {"url": "http://..."}}
+					]
+				}
+			]
+		}`)
+
+		req, _ := http.NewRequest(http.MethodPost, "http://example.com", bytes.NewReader(reqBody))
+		req.Header.Set("Content-Type", "application/json")
+
+		err := plugin.ProcessRequest(req)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		modifiedBody, _ := io.ReadAll(req.Body)
+		sBody := strings.ReplaceAll(string(modifiedBody), " ", "")
+		sBody = strings.ReplaceAll(sBody, "\n", "")
+		sBody = strings.ReplaceAll(sBody, "\t", "")
+
+		// 验证内容没有被修改为字符串，仍然保持数组形式
+		if strings.Contains(sBody, `"content":"hello"`) {
+			t.Errorf("User role content should not be flattened: %s", string(modifiedBody))
+		}
+		if !strings.Contains(sBody, `"type":"image_url"`) {
+			t.Errorf("User role content should remain an array: %s", string(modifiedBody))
+		}
+	})
 }

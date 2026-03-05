@@ -145,6 +145,12 @@ func (c *CodexFixPlugin) processMessageArray(messages []interface{}) bool {
 		}
 
 		// A. 处理 Content (如果是数组则展平)
+		// 仅针对 role 为 assistant 的消息进行处理，以保留 user 消息可能存在的多模态数组
+		role, _ := msg["role"].(string)
+		if role != "assistant" {
+			continue
+		}
+
 		contentIntf, ok := msg["content"]
 		if !ok {
 			continue
