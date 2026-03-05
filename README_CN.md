@@ -4,7 +4,7 @@
 
 [![Go Version](https://img.shields.io/badge/Go-1.25-blue?logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Go Report Card](https://goreportcard.com/badge/github.com/daydaychen/smart-proxy)](https://goreportcard.com/report/github.com/daydaychen/smart-proxy)
+[![Go Report Card](https://goreportcard.com/badge/github.com/daydaychen/devproxy)](https://goreportcard.com/report/github.com/daydaychen/devproxy)
 
 一个用 Go 实现的智能 MITM 代理工具，能够拦截并修改指定 URL 的 HTTP/HTTPS 请求。
 
@@ -30,13 +30,13 @@
 **使用 Go 安装:**
 
 ```bash
-go install github.com/daydaychen/smart-proxy@latest
+go install github.com/daydaychen/devproxy@latest
 ```
 
 **从源码编译:**
 
 ```bash
-git clone https://github.com/daydaychen/smart-proxy.git
+git clone https://github.com/daydaychen/devproxy.git
 cd devproxy
 make build
 ./devproxy --help
@@ -274,7 +274,7 @@ devproxy/
 
 ```bash
 # 克隆项目
-git clone https://github.com/daydaychen/smart-proxy.git
+git clone https://github.com/daydaychen/devproxy.git
 cd devproxy
 
 # 安装依赖
