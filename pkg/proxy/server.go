@@ -157,19 +157,23 @@ func (s *ProxyServer) Start() error {
 			needBody = true
 		}
 
-		// 3. 按需读取并恢复 Body (仅为插件服务)
+		// 3. 按需读取并恢复 Body (仅为插件服务，使用 Buffer Pool 减少内存分配)
 		if needBody && req.Body != nil && req.Body != http.NoBody {
-			body, err := io.ReadAll(req.Body)
+			buf := GetBuffer()
+			defer PutBuffer(buf)
+
+			_, err := io.Copy(buf, req.Body)
 			if err == nil {
+				body := buf.Bytes()
 				req.GetBody = func() (io.ReadCloser, error) {
 					return io.NopCloser(bytes.NewReader(body)), nil
 				}
 				req.Body, _ = req.GetBody()
-				
+
 				// 关键点：同步状态，但减少人工 Header 干预，让 net/http 标准库处理
 				req.ContentLength = int64(len(body))
 				req.Header.Del("Transfer-Encoding")
-				req.Header.Del("Expect") 
+				req.Header.Del("Expect")
 			}
 		}
 
