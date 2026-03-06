@@ -46,12 +46,23 @@ type ChatCompletionChunk struct {
 	Choices []struct {
 		Index int `json:"index"`
 		Delta struct {
-			Role    string `json:"role,omitempty"`
-			Content string `json:"content,omitempty"`
+			Role      string      `json:"role,omitempty"`
+			Content   string      `json:"content,omitempty"`
+			ToolCalls []ChunkTool `json:"tool_calls,omitempty"`
 		} `json:"delta"`
 		FinishReason *string `json:"finish_reason,omitempty"`
 	} `json:"choices"`
 	Usage map[string]interface{} `json:"usage,omitempty"`
+}
+
+type ChunkTool struct {
+	Index    int    `json:"index"`
+	ID       string `json:"id,omitempty"`
+	Type     string `json:"type,omitempty"`
+	Function struct {
+		Name      string `json:"name,omitempty"`
+		Arguments string `json:"arguments,omitempty"`
+	} `json:"function"`
 }
 
 // ResponsesAPIEvent 为 Responses API 流式事件结构

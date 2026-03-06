@@ -287,6 +287,7 @@ func (s *ProxyServer) Start() error {
 
 		// 5. 执行规则逻辑
 		if matchedRule != nil {
+			ctx.UserData = matchedRule
 			if s.Verbose {
 				s.Logger.Printf("[RULE:%s MATCHED] %s", matchedRule.Name, matchURL)
 			}
@@ -320,23 +321,31 @@ func (s *ProxyServer) Start() error {
 			matchURL := NormalizeURL(reqURL)
 
 			var matchedRule *ProxyRule
-			for _, rule := range s.Rules {
-				matched := false
-				if len(rule.Matchers) == 0 {
-					if len(rule.ResponsePlugins) > 0 {
-						matched = true
-					}
-				} else {
-					for _, matcher := range rule.Matchers {
-						if matcher.Match(matchURL) {
+			// 1. 优先从 UserData 获取在 Request 阶段匹配到的规则
+			if r, ok := ctx.UserData.(*ProxyRule); ok {
+				matchedRule = r
+			}
+
+			// 2. 如果没有，则重新尝试匹配
+			if matchedRule == nil {
+				for _, rule := range s.Rules {
+					matched := false
+					if len(rule.Matchers) == 0 {
+						if len(rule.ResponsePlugins) > 0 {
 							matched = true
-							break
+						}
+					} else {
+						for _, matcher := range rule.Matchers {
+							if matcher.Match(matchURL) {
+								matched = true
+								break
+							}
 						}
 					}
-				}
-				if matched {
-					matchedRule = rule
-					break
+					if matched {
+						matchedRule = rule
+						break
+					}
 				}
 			}
 

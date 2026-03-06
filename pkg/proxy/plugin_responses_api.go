@@ -24,7 +24,8 @@ func (p *ResponsesAPIPlugin) Name() string {
 // ResponsesAPIRequest represents the incoming request body for /v1/responses
 type ResponsesAPIRequest struct {
 	Model           string        `json:"model"`
-	Input           []interface{} `json:"input"` // messages
+	Instructions    string        `json:"instructions,omitempty"`
+	Input           []interface{} `json:"input,omitempty"`
 	ResponseFormat  *ResponseFmt  `json:"response_format,omitempty"`
 	Stream          bool          `json:"stream,omitempty"`
 	MaxOutputTokens int           `json:"max_output_tokens,omitempty"`
@@ -47,6 +48,7 @@ type ChatCompletionRequest struct {
 	ResponseFormat      *ChatResponseFormat    `json:"response_format,omitempty"`
 	Stream              bool                   `json:"stream,omitempty"`
 	MaxTokens           int                    `json:"max_tokens,omitempty"`
+	MaxCompletionTokens int                    `json:"max_completion_tokens,omitempty"`
 	Temperature         *float64               `json:"temperature,omitempty"`
 	TopP                *float64               `json:"top_p,omitempty"`
 	N                   *int                   `json:"n,omitempty"`
@@ -83,27 +85,38 @@ func (p *ResponsesAPIPlugin) ProcessRequest(req *http.Request) error {
 	// 3. Unmarshal Responses API request
 	var respReq ResponsesAPIRequest
 	if err := json.Unmarshal(bodyBytes, &respReq); err != nil {
-		// If unmarshal fails, maybe it's not a JSON body or malformed.
-		// We'll log it and let it pass through (upstream might reject it).
 		log.Printf("[responses-api] Warning: failed to parse request body: %v", err)
 		req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 		return nil
 	}
 
 	// 4. Transform to Chat Completion Request
+	messages := p.transformMessages(respReq.Input)
+	
+	// Prepend instructions as a developer/system message if present
+	if respReq.Instructions != "" {
+		instrMsg := map[string]interface{}{
+			"role":    "developer",
+			"content": respReq.Instructions,
+		}
+		messages = append([]interface{}{instrMsg}, messages...)
+	}
+
 	chatReq := ChatCompletionRequest{
 		Model:       respReq.Model,
-		Messages:    respReq.Input,
+		Messages:    messages,
 		Stream:      respReq.Stream,
 		Temperature: respReq.Temperature,
 		TopP:        respReq.TopP,
 		N:           respReq.N,
-		Tools:       respReq.Tools,
-		ToolChoice:  respReq.ToolChoice,
+		Tools:       p.transformTools(respReq.Tools),
+		ToolChoice:  p.transformToolChoice(respReq.ToolChoice),
 	}
 
-	// Map max_output_tokens -> max_tokens
+	// Map max_output_tokens -> max_completion_tokens (preferred for newer models)
 	if respReq.MaxOutputTokens > 0 {
+		chatReq.MaxCompletionTokens = respReq.MaxOutputTokens
+		// Also set max_tokens for backward compatibility
 		chatReq.MaxTokens = respReq.MaxOutputTokens
 	}
 
@@ -131,35 +144,279 @@ func (p *ResponsesAPIPlugin) ProcessRequest(req *http.Request) error {
 	// Mark this request as a Responses API request so ProcessResponse can handle it
 	req.Header.Set("X-DevProxy-Responses-API", "true")
 
-	log.Printf("[responses-api] Rewrote request /v1/responses -> /v1/chat/completions")
+	log.Printf("[responses-api] Rewrote request /v1/responses -> /v1/chat/completions (model: %s)", respReq.Model)
 	return nil
 }
 
+func (p *ResponsesAPIPlugin) transformMessages(input []interface{}) []interface{} {
+	if input == nil {
+		return nil
+	}
+	output := make([]interface{}, 0, len(input))
+	for _, m := range input {
+		item, ok := m.(map[string]interface{})
+		if !ok {
+			output = append(output, m)
+			continue
+		}
+
+		itemType, _ := item["type"].(string)
+
+		switch itemType {
+		case "message":
+			newMsg := make(map[string]interface{})
+			// Standard Chat Completion roles: user, assistant, system, developer
+			if role, ok := item["role"].(string); ok {
+				newMsg["role"] = role
+			}
+			if content := item["content"]; content != nil {
+				newMsg["content"] = p.transformContent(content)
+			}
+			// Copy other relevant fields (like name)
+			for k, v := range item {
+				if k != "type" && k != "role" && k != "content" && k != "phase" {
+					newMsg[k] = v
+				}
+			}
+			output = append(output, newMsg)
+
+		case "function_call":
+			// Map to assistant message with tool_calls for standard Chat Completion
+			newMsg := map[string]interface{}{
+				"role": "assistant",
+				"tool_calls": []interface{}{
+					map[string]interface{}{
+						"id":   item["call_id"],
+						"type": "function",
+						"function": map[string]interface{}{
+							"name":      item["name"],
+							"arguments": item["arguments"],
+						},
+					},
+				},
+			}
+			output = append(output, newMsg)
+
+		case "function_call_output":
+			// Map to tool message
+			newMsg := map[string]interface{}{
+				"role":         "tool",
+				"tool_call_id": item["call_id"],
+				"content":      item["output"],
+			}
+			output = append(output, newMsg)
+
+		default:
+			// Fallback: If it has role, assume it's already a standard message
+			if _, hasRole := item["role"]; hasRole {
+				newMsg := make(map[string]interface{})
+				for k, v := range item {
+					if k == "content" {
+						newMsg[k] = p.transformContent(v)
+					} else {
+						newMsg[k] = v
+					}
+				}
+				output = append(output, newMsg)
+			} else {
+				output = append(output, item)
+			}
+		}
+	}
+	return output
+}
+
+func (p *ResponsesAPIPlugin) transformContent(content interface{}) interface{} {
+	switch v := content.(type) {
+	case string:
+		return v
+	case []interface{}:
+		newContent := make([]interface{}, len(v))
+		for i, p := range v {
+			part, ok := p.(map[string]interface{})
+			if !ok {
+				newContent[i] = p
+				continue
+			}
+			newPart := make(map[string]interface{})
+			for pk, pv := range part {
+				// Responses API uses input_text/output_text, Chat uses text
+				if pk == "type" && (pv == "input_text" || pv == "output_text") {
+					newPart[pk] = "text"
+				} else {
+					newPart[pk] = pv
+				}
+			}
+			newContent[i] = newPart
+		}
+		return newContent
+	default:
+		return content
+	}
+}
+
+func (p *ResponsesAPIPlugin) transformTools(tools []interface{}) []interface{} {
+	if tools == nil {
+		return nil
+	}
+	output := make([]interface{}, 0, len(tools))
+	for _, t := range tools {
+		tool, ok := t.(map[string]interface{})
+		if !ok {
+			output = append(output, t)
+			continue
+		}
+
+		toolType, _ := tool["type"].(string)
+
+		// 1. Standard Function Tool (Responses API format)
+		if toolType == "function" {
+			newTool := map[string]interface{}{
+				"type": "function",
+			}
+
+			var fnParams map[string]interface{}
+			if fn, hasFn := tool["function"].(map[string]interface{}); hasFn {
+				fnParams = fn
+			} else {
+				// Flat format: name/parameters at top level
+				fnParams = tool
+			}
+
+			newTool["function"] = map[string]interface{}{
+				"name":        fnParams["name"],
+				"description": fnParams["description"],
+				"parameters":  p.cleanParameters(fnParams["parameters"]),
+			}
+			output = append(output, newTool)
+			continue
+		}
+
+		// 2. Built-in Tools (web_search, etc.) -> Map to Function
+		if toolType != "" {
+			newTool := map[string]interface{}{
+				"type": "function",
+				"function": map[string]interface{}{
+					"name":        toolType,
+					"description": fmt.Sprintf("Built-in tool: %s", toolType),
+					"parameters": map[string]interface{}{
+						"type":       "object",
+						"properties": p.extractToolProperties(tool),
+					},
+				},
+			}
+			output = append(output, newTool)
+			continue
+		}
+
+		output = append(output, tool)
+	}
+	return output
+}
+
+func (p *ResponsesAPIPlugin) extractToolProperties(tool map[string]interface{}) map[string]interface{} {
+	props := make(map[string]interface{})
+	for k, v := range tool {
+		if k != "type" && k != "function" {
+			props[k] = v
+		}
+	}
+	return props
+}
+
+func (p *ResponsesAPIPlugin) cleanParameters(params interface{}) interface{} {
+	m, ok := params.(map[string]interface{})
+	if !ok {
+		return params
+	}
+
+	newM := make(map[string]interface{})
+	for k, v := range m {
+		// Strip additionalProperties as many providers don't support it in tool parameters
+		if k == "additionalProperties" {
+			continue
+		}
+
+		// Recursively clean properties if it's a map
+		if k == "properties" {
+			if props, ok := v.(map[string]interface{}); ok {
+				newProps := make(map[string]interface{})
+				for pk, pv := range props {
+					newProps[pk] = p.cleanParameters(pv)
+				}
+				newM[k] = newProps
+				continue
+			}
+		}
+
+		// Also clean items for arrays
+		if k == "items" {
+			newM[k] = p.cleanParameters(v)
+			continue
+		}
+
+		newM[k] = v
+	}
+	return newM
+}
+
+func (p *ResponsesAPIPlugin) transformToolChoice(choice interface{}) interface{} {
+	if choice == nil {
+		return nil
+	}
+	// If it's a string like "auto", "none", "required", return as is
+	if _, ok := choice.(string); ok {
+		return choice
+	}
+
+	// If it's an object {"type": "function", "function": {"name": "..."}}
+	m, ok := choice.(map[string]interface{})
+	if !ok {
+		return choice
+	}
+
+	// If it has name at top level (Responses API might support this in some versions)
+	if name, ok := m["name"].(string); ok && m["function"] == nil {
+		return map[string]interface{}{
+			"type": "function",
+			"function": map[string]interface{}{
+				"name": name,
+			},
+		}
+	}
+
+	return choice
+}
+
 func (p *ResponsesAPIPlugin) ProcessResponse(resp *http.Response, ctx *goproxy.ProxyCtx, verbose bool) error {
-	// We only process responses if the original request was to /v1/responses.
-	// However, since we rewrote the path in ProcessRequest, the req.URL.Path in context might be /v1/chat/completions.
-	// But we can check if this plugin's ProcessRequest logic ran.
-	// Actually, goproxy doesn't easily share state between Request and Response phases per request unless we use ctx.UserData.
-	// But `ProcessRequest` modifies the `http.Request` object in place.
-	// A robust way is to check if we are in a response to a request we modified.
-	// Since we can't easily track that without UserData (which we might not have full control over in this interface signature if it varies),
-	// we will assume that if we are enabled, we might want to process it.
-	// BUT, `ProcessResponse` is called for *all* responses. We need to know if it was originally /v1/responses.
-	
-	// Wait, `req` in `ProcessResponse` is the *request that received the response*.
-	// Since we rewrote the URL in `ProcessRequest`, `resp.Request.URL.Path` will likely be `/v1/chat/completions`.
-	// We might need a way to flag this request.
-	// We can add a custom header in `ProcessRequest` and check for it here, then remove it.
-	
-	// Let's rely on a custom internal header.
-	if resp.Request != nil && resp.Request.Header.Get("X-DevProxy-Responses-API") != "true" {
+	if resp.Request == nil {
 		return nil
 	}
 
-	// Clean up the marker header from the response (it shouldn't be there, but good practice to ignore)
-	// Actually, we can't easily modify the *request* headers at this stage for the client, but it doesn't matter.
+	// Detection logic:
+	// 1. Check for our internal marker header
+	isResponsesAPI := resp.Request.Header.Get("X-DevProxy-Responses-API") == "true"
+	
+	// 2. Fallback: Check if it's a chat/completions request (which we might have rewritten from /v1/responses)
+	// We only do this if we are SURE it was our plugin that did the rewrite.
+	// Since we are now using matchedRule in server.go, this plugin will only be called if the rule matched.
+	// Therefore, if it's a chat/completions request, it's highly likely it needs conversion back to responses format.
+	if !isResponsesAPI && strings.HasSuffix(resp.Request.URL.Path, "/chat/completions") {
+		isResponsesAPI = true
+	}
+
+	if !isResponsesAPI {
+		return nil
+	}
+
+	if verbose {
+		log.Printf("[responses-api] Processing response for %s (Status: %d)", resp.Request.URL.Path, resp.StatusCode)
+	}
 
 	if resp.StatusCode != http.StatusOK {
+		if verbose {
+			log.Printf("[responses-api] Non-200 status code: %d", resp.StatusCode)
+		}
 		return nil
 	}
 
@@ -262,12 +519,98 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 
 		br := bufio.NewReaderSize(originalBody, 1024*1024)
 		var responseID string
-		var itemID string
-		var seqNum int
 		var createdAt int64
 		var model string
+
+		// State for message (Item 0)
 		var fullContent strings.Builder
+		var messageItemID string
+		var messageSeqNum int
+		var messageAdded bool
+		var messagePartAdded bool
+		var messageDone bool
+
+		// State for tool calls (Items 1, 2, ...)
+		type toolCallState struct {
+			ID        string
+			Name      string
+			Arguments strings.Builder
+			Added     bool
+			Done      bool
+		}
+		toolCalls := make(map[int]*toolCallState)
+
 		var completedSent bool
+
+		// Helper to close the message item
+		finishMessage := func() {
+			if messageAdded && !messageDone {
+				p.writeEvent(writer, "response.output_text.done", ResponsesAPIEvent{
+					Type: "response.output_text.done", ResponseID: responseID, ItemID: messageItemID,
+					ContentPartIndex: 0, ContentPart: &ContentPart{Type: "output_text", Index: 0, Text: fullContent.String()},
+				})
+				p.writeEvent(writer, "response.content_part.done", ResponsesAPIEvent{
+					Type: "response.content_part.done", ResponseID: responseID, ItemID: messageItemID,
+					ContentPartIndex: 0, ContentPart: &ContentPart{Type: "output_text", Index: 0, Text: fullContent.String()},
+				})
+				p.writeEvent(writer, "response.output_item.done", ResponsesAPIEvent{
+					Type: "response.output_item.done", ResponseID: responseID, OutputIndex: 0,
+					Item: &Item{ID: messageItemID, Type: "message", Status: "completed", Role: "assistant", Content: []Content{{Type: "output_text", Text: fullContent.String()}}},
+				})
+				messageDone = true
+			}
+		}
+
+		// Helper to close a tool call item
+		finishToolCall := func(idx int, tc *toolCallState) {
+			if tc.Added && !tc.Done {
+				itemIdx := 0
+				if messageAdded {
+					itemIdx = 1
+				}
+				itemIdx += idx
+				tItemID := fmt.Sprintf("msg_%s_%d", responseID, itemIdx)
+
+				p.writeEvent(writer, "response.output_item.done", ResponsesAPIEvent{
+					Type: "response.output_item.done", ResponseID: responseID, OutputIndex: itemIdx,
+					Item: &Item{ID: tItemID, Type: "function_call", Status: "completed", Name: tc.Name, Arguments: tc.Arguments.String(), CallID: tc.ID},
+				})
+				tc.Done = true
+			}
+		}
+
+		sendFinalEvents := func(usage interface{}) {
+			if completedSent {
+				return
+			}
+			finishMessage()
+
+			finalItems := make([]Item, 0)
+			if messageAdded {
+				finalItems = append(finalItems, Item{
+					ID: messageItemID, Type: "message", Status: "completed", Role: "assistant",
+					Content: []Content{{Type: "output_text", Text: fullContent.String()}},
+				})
+			}
+
+			// Finish all tool calls in order
+			for i := 0; i < len(toolCalls); i++ {
+				if tc, ok := toolCalls[i]; ok {
+					finishToolCall(i, tc)
+					itemIdx := len(finalItems)
+					tItemID := fmt.Sprintf("msg_%s_%d", responseID, itemIdx)
+					finalItems = append(finalItems, Item{
+						ID: tItemID, Type: "function_call", Status: "completed", Name: tc.Name, Arguments: tc.Arguments.String(), CallID: tc.ID,
+					})
+				}
+			}
+
+			p.writeEvent(writer, "response.completed", ResponsesAPIEvent{
+				Type: "response.completed", ResponseID: responseID,
+				Response: &ResponsesAPIResponse{ID: responseID, Object: "response", CreatedAt: createdAt, Model: model, Usage: usage, Output: finalItems},
+			})
+			completedSent = true
+		}
 
 		for {
 			line, err := br.ReadString('\n')
@@ -279,51 +622,94 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 				if strings.HasPrefix(trimmedLine, "data: ") {
 					data := strings.TrimPrefix(trimmedLine, "data: ")
 					if data == "[DONE]" {
-						if !completedSent && responseID != "" {
-							p.sendCompletionEvents(writer, responseID, itemID, createdAt, model, fullContent.String(), nil)
-							completedSent = true
-						}
+						sendFinalEvents(nil)
 						writer.Write([]byte("data: [DONE]\n\n"))
 					} else {
 						var chunk ChatCompletionChunk
 						if errUnmarshal := json.Unmarshal([]byte(data), &chunk); errUnmarshal == nil && len(chunk.ID) > 0 {
 							if responseID == "" {
 								responseID = strings.Replace(chunk.ID, "chatcmpl-", "resp_", 1)
-								itemID = fmt.Sprintf("msg_%s_0", responseID)
 								createdAt = chunk.Created
 								model = chunk.Model
-
 								p.writeEvent(writer, "response.created", ResponsesAPIEvent{
 									Type: "response.created", ResponseID: responseID,
 									Response: &ResponsesAPIResponse{ID: responseID, Object: "response", CreatedAt: createdAt, Model: model},
 								})
-								p.writeEvent(writer, "response.output_item.added", ResponsesAPIEvent{
-									Type: "response.output_item.added", ResponseID: responseID,
-									OutputIndex: 0,
-									Item: &Item{ID: itemID, Type: "message", Status: "in_progress", Role: "assistant"},
-								})
-								p.writeEvent(writer, "response.content_part.added", ResponsesAPIEvent{
-									Type: "response.content_part.added", ResponseID: responseID, ItemID: itemID,
-									ContentPart: &ContentPart{Type: "output_text", Index: 0},
-								})
 							}
 
 							if len(chunk.Choices) > 0 {
-								delta := chunk.Choices[0].Delta.Content
-								if delta != "" {
-									fullContent.WriteString(delta)
-									seqNum++
+								choice := chunk.Choices[0]
+								delta := choice.Delta
+
+								// 1. Process Text Content
+								if delta.Content != "" {
+									if !messageAdded {
+										messageItemID = fmt.Sprintf("msg_%s_0", responseID)
+										p.writeEvent(writer, "response.output_item.added", ResponsesAPIEvent{
+											Type: "response.output_item.added", ResponseID: responseID, OutputIndex: 0,
+											Item: &Item{ID: messageItemID, Type: "message", Status: "in_progress", Role: "assistant"},
+										})
+										messageAdded = true
+									}
+									if !messagePartAdded {
+										p.writeEvent(writer, "response.content_part.added", ResponsesAPIEvent{
+											Type: "response.content_part.added", ResponseID: responseID, ItemID: messageItemID,
+											ContentPart: &ContentPart{Type: "output_text", Index: 0},
+										})
+										messagePartAdded = true
+									}
+									fullContent.WriteString(delta.Content)
+									messageSeqNum++
 									p.writeEvent(writer, "response.output_text.delta", ResponsesAPIEvent{
-										Type: "response.output_text.delta", ResponseID: responseID, ItemID: itemID, Delta: delta, SequenceNumber: seqNum,
+										Type: "response.output_text.delta", ResponseID: responseID, ItemID: messageItemID,
+										Delta: delta.Content, SequenceNumber: messageSeqNum,
 									})
 								}
-								if chunk.Choices[0].FinishReason != nil {
-									p.sendCompletionEvents(writer, responseID, itemID, createdAt, model, fullContent.String(), chunk.Usage)
-									completedSent = true
+
+								// 2. Process Tool Calls
+								if len(delta.ToolCalls) > 0 {
+									// If we were sending text, finish that item first to keep order
+									finishMessage()
+
+									for _, tcChunk := range delta.ToolCalls {
+										tc, ok := toolCalls[tcChunk.Index]
+										if !ok {
+											tc = &toolCallState{}
+											toolCalls[tcChunk.Index] = tc
+										}
+										if tcChunk.ID != "" {
+											tc.ID = tcChunk.ID
+										}
+										if tcChunk.Function.Name != "" {
+											tc.Name = tcChunk.Function.Name
+										}
+										if tcChunk.Function.Arguments != "" {
+											tc.Arguments.WriteString(tcChunk.Function.Arguments)
+										}
+
+										// Announce tool call once we have basic info (ID/Name) or some arguments
+										if !tc.Added && (tc.ID != "" || tc.Name != "" || tc.Arguments.Len() > 0) {
+											itemIdx := 0
+											if messageAdded {
+												itemIdx = 1
+											}
+											itemIdx += tcChunk.Index
+											tItemID := fmt.Sprintf("msg_%s_%d", responseID, itemIdx)
+
+											p.writeEvent(writer, "response.output_item.added", ResponsesAPIEvent{
+												Type: "response.output_item.added", ResponseID: responseID, OutputIndex: itemIdx,
+												Item: &Item{ID: tItemID, Type: "function_call", Status: "in_progress", Name: tc.Name, CallID: tc.ID},
+											})
+											tc.Added = true
+										}
+									}
+								}
+
+								if choice.FinishReason != nil {
+									sendFinalEvents(chunk.Usage)
 								}
 							}
 						} else {
-							// Pass through just in case
 							writer.Write([]byte(trimmedLine + "\n\n"))
 						}
 					}
@@ -333,6 +719,10 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 			}
 
 			if err != nil {
+				if !completedSent && responseID != "" {
+					sendFinalEvents(nil)
+					writer.Write([]byte("data: [DONE]\n\n"))
+				}
 				break
 			}
 		}
