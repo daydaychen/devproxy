@@ -5,6 +5,8 @@
 [![Go Version](https://img.shields.io/badge/Go-1.25-blue?logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/daydaychen/devproxy)](https://goreportcard.com/report/github.com/daydaychen/devproxy)
+[![CI](https://github.com/daydaychen/devproxy/actions/workflows/ci.yml/badge.svg)](https://github.com/daydaychen/devproxy/actions/workflows/ci.yml)
+[![Latest Release](https://img.shields.io/github/v/release/daydaychen/devproxy)](https://github.com/daydaychen/devproxy/releases)
 
 An intelligent MITM proxy tool implemented in Go, designed for AI developers to intercept, modify, and adapt complex LLM API requests (supporting OpenAI Responses API transformation).
 

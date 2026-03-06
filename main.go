@@ -1,6 +1,6 @@
 package main
 
-import "devproxy/cmd"
+import "github.com/daydaychen/devproxy/cmd"
 
 func main() {
 	cmd.Execute()

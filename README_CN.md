@@ -5,6 +5,8 @@
 [![Go Version](https://img.shields.io/badge/Go-1.25-blue?logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/daydaychen/devproxy)](https://goreportcard.com/report/github.com/daydaychen/devproxy)
+[![CI](https://github.com/daydaychen/devproxy/actions/workflows/ci.yml/badge.svg)](https://github.com/daydaychen/devproxy/actions/workflows/ci.yml)
+[![Latest Release](https://img.shields.io/github/v/release/daydaychen/devproxy)](https://github.com/daydaychen/devproxy/releases)
 
 一个用 Go 实现的智能 MITM 代理工具，专为 AI 开发者设计，能够拦截、修改并适配复杂的 LLM API 请求（支持 OpenAI Responses API 转换）。
 

@@ -2,7 +2,7 @@
 
 BINARY_NAME=devproxy
 VERSION=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
-LDFLAGS=-X devproxy/pkg/util.Version=$(VERSION)
+LDFLAGS=-X github.com/daydaychen/devproxy/pkg/util.Version=$(VERSION)
 BUILD_DIR=build
 PLATFORMS=linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
 

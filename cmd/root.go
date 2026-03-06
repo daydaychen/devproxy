@@ -12,10 +12,10 @@ import (
 	"syscall"
 	"time"
 
-	"devproxy/pkg/config"
-	"devproxy/pkg/process"
-	"devproxy/pkg/proxy"
-	"devproxy/pkg/util"
+	"github.com/daydaychen/devproxy/pkg/config"
+	"github.com/daydaychen/devproxy/pkg/process"
+	"github.com/daydaychen/devproxy/pkg/proxy"
+	"github.com/daydaychen/devproxy/pkg/util"
 
 	"github.com/spf13/cobra"
 )
