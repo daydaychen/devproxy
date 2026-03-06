@@ -37,6 +37,10 @@ func init() {
 	openaiPlugin := &OpenAIResponsesPlugin{}
 	RegisterPlugin(openaiPlugin)
 	RegisterResponsePlugin(openaiPlugin)
+
+	responsesAPIPlugin := &ResponsesAPIPlugin{}
+	RegisterPlugin(responsesAPIPlugin)
+	RegisterResponsePlugin(responsesAPIPlugin)
 }
 
 // RegisterPlugin 注册一个请求插件
