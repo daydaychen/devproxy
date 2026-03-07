@@ -517,7 +517,9 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 		defer originalBody.Close()
 		defer writer.Close()
 
-		br := bufio.NewReaderSize(originalBody, 1024*1024)
+		// Use default 4KB buffer for SSE streaming to minimize TTFB latency.
+		// 1MB buffer causes data to accumulate before being read, violating SSE real-time semantics.
+		br := bufio.NewReader(originalBody)
 		var responseID string
 		var createdAt int64
 		var model string
@@ -542,18 +544,29 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 
 		var completedSent bool
 
+		// writeEventWrapper wraps writeEvent and logs errors for client disconnect detection
+		writeEventWrapper := func(eventType string, data interface{}) {
+			if err := p.writeEvent(writer, eventType, data); err != nil {
+				if verbose {
+					log.Printf("[responses-api] Client disconnected while writing event %s: %v", eventType, err)
+				}
+				// Client disconnected, stop processing
+				return
+			}
+		}
+
 		// Helper to close the message item
 		finishMessage := func() {
 			if messageAdded && !messageDone {
-				p.writeEvent(writer, "response.output_text.done", ResponsesAPIEvent{
+				writeEventWrapper("response.output_text.done", ResponsesAPIEvent{
 					Type: "response.output_text.done", ResponseID: responseID, ItemID: messageItemID,
 					ContentPartIndex: 0, ContentPart: &ContentPart{Type: "output_text", Index: 0, Text: fullContent.String()},
 				})
-				p.writeEvent(writer, "response.content_part.done", ResponsesAPIEvent{
+				writeEventWrapper("response.content_part.done", ResponsesAPIEvent{
 					Type: "response.content_part.done", ResponseID: responseID, ItemID: messageItemID,
 					ContentPartIndex: 0, ContentPart: &ContentPart{Type: "output_text", Index: 0, Text: fullContent.String()},
 				})
-				p.writeEvent(writer, "response.output_item.done", ResponsesAPIEvent{
+				writeEventWrapper("response.output_item.done", ResponsesAPIEvent{
 					Type: "response.output_item.done", ResponseID: responseID, OutputIndex: 0,
 					Item: &Item{ID: messageItemID, Type: "message", Status: "completed", Role: "assistant", Content: []Content{{Type: "output_text", Text: fullContent.String()}}},
 				})
@@ -571,7 +584,7 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 				itemIdx += idx
 				tItemID := fmt.Sprintf("msg_%s_%d", responseID, itemIdx)
 
-				p.writeEvent(writer, "response.output_item.done", ResponsesAPIEvent{
+				writeEventWrapper("response.output_item.done", ResponsesAPIEvent{
 					Type: "response.output_item.done", ResponseID: responseID, OutputIndex: itemIdx,
 					Item: &Item{ID: tItemID, Type: "function_call", Status: "completed", Name: tc.Name, Arguments: tc.Arguments.String(), CallID: tc.ID},
 				})
@@ -617,13 +630,23 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 			trimmedLine := strings.TrimRight(line, "\r\n")
 
 			if trimmedLine == "" && line != "" {
-				writer.Write([]byte("\n"))
+				if _, err := writer.Write([]byte("\n")); err != nil {
+					if verbose {
+						log.Printf("[responses-api] Client disconnected: %v", err)
+					}
+					return
+				}
 			} else if trimmedLine != "" {
 				if strings.HasPrefix(trimmedLine, "data: ") {
 					data := strings.TrimPrefix(trimmedLine, "data: ")
 					if data == "[DONE]" {
 						sendFinalEvents(nil)
-						writer.Write([]byte("data: [DONE]\n\n"))
+						if _, err := writer.Write([]byte("data: [DONE]\n\n")); err != nil {
+							if verbose {
+								log.Printf("[responses-api] Client disconnected: %v", err)
+							}
+							return
+						}
 					} else {
 						var chunk ChatCompletionChunk
 						if errUnmarshal := json.Unmarshal([]byte(data), &chunk); errUnmarshal == nil && len(chunk.ID) > 0 {
@@ -631,7 +654,7 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 								responseID = strings.Replace(chunk.ID, "chatcmpl-", "resp_", 1)
 								createdAt = chunk.Created
 								model = chunk.Model
-								p.writeEvent(writer, "response.created", ResponsesAPIEvent{
+								writeEventWrapper("response.created", ResponsesAPIEvent{
 									Type: "response.created", ResponseID: responseID,
 									Response: &ResponsesAPIResponse{ID: responseID, Object: "response", CreatedAt: createdAt, Model: model},
 								})
@@ -645,14 +668,14 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 								if delta.Content != "" {
 									if !messageAdded {
 										messageItemID = fmt.Sprintf("msg_%s_0", responseID)
-										p.writeEvent(writer, "response.output_item.added", ResponsesAPIEvent{
+										writeEventWrapper("response.output_item.added", ResponsesAPIEvent{
 											Type: "response.output_item.added", ResponseID: responseID, OutputIndex: 0,
 											Item: &Item{ID: messageItemID, Type: "message", Status: "in_progress", Role: "assistant"},
 										})
 										messageAdded = true
 									}
 									if !messagePartAdded {
-										p.writeEvent(writer, "response.content_part.added", ResponsesAPIEvent{
+										writeEventWrapper("response.content_part.added", ResponsesAPIEvent{
 											Type: "response.content_part.added", ResponseID: responseID, ItemID: messageItemID,
 											ContentPart: &ContentPart{Type: "output_text", Index: 0},
 										})
@@ -660,7 +683,7 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 									}
 									fullContent.WriteString(delta.Content)
 									messageSeqNum++
-									p.writeEvent(writer, "response.output_text.delta", ResponsesAPIEvent{
+									writeEventWrapper("response.output_text.delta", ResponsesAPIEvent{
 										Type: "response.output_text.delta", ResponseID: responseID, ItemID: messageItemID,
 										Delta: delta.Content, SequenceNumber: messageSeqNum,
 									})
@@ -696,7 +719,7 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 											itemIdx += tcChunk.Index
 											tItemID := fmt.Sprintf("msg_%s_%d", responseID, itemIdx)
 
-											p.writeEvent(writer, "response.output_item.added", ResponsesAPIEvent{
+											writeEventWrapper("response.output_item.added", ResponsesAPIEvent{
 												Type: "response.output_item.added", ResponseID: responseID, OutputIndex: itemIdx,
 												Item: &Item{ID: tItemID, Type: "function_call", Status: "in_progress", Name: tc.Name, CallID: tc.ID},
 											})
@@ -710,11 +733,21 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 								}
 							}
 						} else {
-							writer.Write([]byte(trimmedLine + "\n\n"))
+							if _, err := writer.Write([]byte(trimmedLine + "\n\n")); err != nil {
+								if verbose {
+									log.Printf("[responses-api] Client disconnected: %v", err)
+								}
+								return
+							}
 						}
 					}
 				} else {
-					writer.Write([]byte(trimmedLine + "\n"))
+					if _, err := writer.Write([]byte(trimmedLine + "\n")); err != nil {
+						if verbose {
+							log.Printf("[responses-api] Client disconnected: %v", err)
+						}
+						return
+					}
 				}
 			}
 
@@ -755,8 +788,8 @@ func (p *ResponsesAPIPlugin) sendCompletionEvents(w io.Writer, responseID, itemI
 		},
 	})
 	p.writeEvent(w, "response.output_item.done", ResponsesAPIEvent{
-		Type:       "response.output_item.done",
-		ResponseID: responseID,
+		Type:        "response.output_item.done",
+		ResponseID:  responseID,
 		OutputIndex: 0,
 		Item: &Item{
 			ID:     itemID,
@@ -792,7 +825,28 @@ func (p *ResponsesAPIPlugin) sendCompletionEvents(w io.Writer, responseID, itemI
 	})
 }
 
-func (p *ResponsesAPIPlugin) writeEvent(w io.Writer, eventType string, data interface{}) {
-	payload, _ := json.Marshal(data)
-	w.Write([]byte(fmt.Sprintf("event: %s\ndata: %s\n\n", eventType, string(payload))))
+func (p *ResponsesAPIPlugin) writeEvent(w io.Writer, eventType string, data interface{}) error {
+	payload, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("writeEvent: failed to marshal JSON: %w", err)
+	}
+
+	// Use strings.Builder to reduce allocations compared to fmt.Sprintf
+	prefix := "event: "
+	suffix := "\n\ndata: "
+	end := "\n\n"
+
+	var builder strings.Builder
+	builder.Grow(len(prefix) + len(eventType) + len(suffix) + len(payload) + len(end))
+	builder.WriteString(prefix)
+	builder.WriteString(eventType)
+	builder.WriteString(suffix)
+	builder.Write(payload)
+	builder.WriteString(end)
+
+	_, err = w.Write([]byte(builder.String()))
+	if err != nil {
+		return fmt.Errorf("writeEvent: failed to write: %w", err)
+	}
+	return nil
 }

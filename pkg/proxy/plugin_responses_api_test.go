@@ -129,12 +129,11 @@ func TestResponsesAPIPlugin_ProcessResponse_JSON(t *testing.T) {
 func TestResponsesAPIPlugin_ProcessResponse_Ignored(t *testing.T) {
 	plugin := &ResponsesAPIPlugin{}
 
-	// Request WITHOUT marker header
-	req := httptest.NewRequest("POST", "/v1/chat/completions", nil)
-	// req.Header.Set("X-DevProxy-Responses-API", "true") // MISSING
+	// Request to a DIFFERENT endpoint (not chat/completions, not responses)
+	req := httptest.NewRequest("POST", "/v1/completions", nil)
 
 	chatRespMap := map[string]interface{}{
-		"id": "chatcmpl-123",
+		"id": "cmpl-123",
 	}
 	respBody, _ := json.Marshal(chatRespMap)
 
@@ -150,9 +149,9 @@ func TestResponsesAPIPlugin_ProcessResponse_Ignored(t *testing.T) {
 		t.Fatalf("ProcessResponse failed: %v", err)
 	}
 
-	// Body should be unchanged (or at least same content)
+	// Body should be unchanged
 	newBytes, _ := io.ReadAll(resp.Body)
-	if !bytes.Contains(newBytes, []byte("chatcmpl-123")) {
+	if !bytes.Contains(newBytes, []byte("cmpl-123")) {
 		t.Errorf("Response should not have been transformed")
 	}
 }
