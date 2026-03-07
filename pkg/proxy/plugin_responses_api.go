@@ -10,7 +10,6 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/elazarl/goproxy"
 )
@@ -530,19 +529,13 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 
 		// Use default 4KB buffer for SSE streaming to minimize TTFB latency.
 		// 1MB buffer causes data to accumulate before being read, violating SSE real-time semantics.
-		br := bufio.NewReader(originalBody)
+		scanner := bufio.NewScanner(originalBody)
 		var responseID string
 		var createdAt int64
 		var model string
 
 		if verbose {
 			log.Printf("[responses-api] handleStream: started with 4KB buffer")
-		}
-
-		// Set read deadline to detect upstream timeout
-		// Upstream should send first chunk within 10 seconds
-		if c, ok := originalBody.(interface{ SetReadDeadline(time.Time) error }); ok {
-			c.SetReadDeadline(time.Now().Add(10 * time.Second))
 		}
 
 		// State for message (Item 0)
@@ -657,38 +650,27 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 			completedSent = true
 		}
 
-		for {
-			line, err := br.ReadString('\n')
-			trimmedLine := strings.TrimRight(line, "\r\n")
-
-			if err != nil {
-				if verbose {
-					log.Printf("[responses-api] ReadString error: %v, line read: %d bytes", err, len(line))
-				}
-				// Check if it's a timeout error
-				if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
-					log.Printf("[responses-api] Upstream read timeout - no data received within 10s")
-				}
-			}
+		for scanner.Scan() {
+			line := scanner.Text()
 
 			if verbose {
-				logLen := len(trimmedLine)
+				logLen := len(line)
 				if logLen > 50 {
 					logLen = 50
 				}
-				log.Printf("[responses-api] Read line (%d bytes): %s", len(line), trimmedLine[:logLen])
+				log.Printf("[responses-api] Read line: %s", line[:logLen])
 			}
 
-			if trimmedLine == "" && line != "" {
+			if line == "" {
 				if _, err := writer.Write([]byte("\n")); err != nil {
 					if verbose {
 						log.Printf("[responses-api] Client disconnected: %v", err)
 					}
 					return
 				}
-			} else if trimmedLine != "" {
-				if strings.HasPrefix(trimmedLine, "data: ") {
-					data := strings.TrimPrefix(trimmedLine, "data: ")
+			} else {
+				if strings.HasPrefix(line, "data: ") {
+					data := strings.TrimPrefix(line, "data: ")
 					if data == "[DONE]" {
 						if verbose {
 							log.Printf("[responses-api] Received [DONE], sending final events")
@@ -801,10 +783,10 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 							}
 						} else {
 							if verbose {
-								log.Printf("[responses-api] Failed to parse chunk or empty ID: %v, data: %s", errUnmarshal, trimmedLine[:min(100, len(trimmedLine))])
+								log.Printf("[responses-api] Failed to parse chunk or empty ID: %v, data: %s", errUnmarshal, line[:min(100, len(line))])
 							}
 							// Forward non-JSON or unparseable data as-is
-							if _, err := writer.Write([]byte(trimmedLine + "\n\n")); err != nil {
+							if _, err := writer.Write([]byte(line + "\n\n")); err != nil {
 								if verbose {
 									log.Printf("[responses-api] Client disconnected: %v", err)
 								}
@@ -813,7 +795,7 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 						}
 					}
 				} else {
-					if _, err := writer.Write([]byte(trimmedLine + "\n")); err != nil {
+					if _, err := writer.Write([]byte(line + "\n")); err != nil {
 						if verbose {
 							log.Printf("[responses-api] Client disconnected: %v", err)
 						}
@@ -821,14 +803,10 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 					}
 				}
 			}
-
-			if err != nil {
-				if !completedSent && responseID != "" {
-					sendFinalEvents(nil)
-					writer.Write([]byte("data: [DONE]\n\n"))
-				}
-				break
-			}
+		}
+		// After loop: check scanner errors
+		if err := scanner.Err(); err != nil {
+			log.Printf("[responses-api] Scanner error: %v", err)
 		}
 	}()
 
