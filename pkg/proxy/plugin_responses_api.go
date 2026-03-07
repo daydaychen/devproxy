@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/elazarl/goproxy"
 )
@@ -538,6 +539,12 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 			log.Printf("[responses-api] handleStream: started with 4KB buffer")
 		}
 
+		// Set read deadline to detect upstream timeout
+		// Upstream should send first chunk within 10 seconds
+		if c, ok := originalBody.(interface{ SetReadDeadline(time.Time) error }); ok {
+			c.SetReadDeadline(time.Now().Add(10 * time.Second))
+		}
+
 		// State for message (Item 0)
 		var fullContent strings.Builder
 		var messageItemID string
@@ -653,6 +660,16 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 		for {
 			line, err := br.ReadString('\n')
 			trimmedLine := strings.TrimRight(line, "\r\n")
+
+			if err != nil {
+				if verbose {
+					log.Printf("[responses-api] ReadString error: %v, line read: %d bytes", err, len(line))
+				}
+				// Check if it's a timeout error
+				if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
+					log.Printf("[responses-api] Upstream read timeout - no data received within 10s")
+				}
+			}
 
 			if verbose {
 				logLen := len(trimmedLine)
