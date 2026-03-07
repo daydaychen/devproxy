@@ -14,6 +14,14 @@ import (
 	"github.com/elazarl/goproxy"
 )
 
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // ResponsesAPIPlugin adapts the OpenAI Responses API (/v1/responses) to the Chat Completions API (/v1/chat/completions).
 type ResponsesAPIPlugin struct{}
 
@@ -646,6 +654,14 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 			line, err := br.ReadString('\n')
 			trimmedLine := strings.TrimRight(line, "\r\n")
 
+			if verbose {
+				logLen := len(trimmedLine)
+				if logLen > 50 {
+					logLen = 50
+				}
+				log.Printf("[responses-api] Read line (%d bytes): %s", len(line), trimmedLine[:logLen])
+			}
+
 			if trimmedLine == "" && line != "" {
 				if _, err := writer.Write([]byte("\n")); err != nil {
 					if verbose {
@@ -657,6 +673,9 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 				if strings.HasPrefix(trimmedLine, "data: ") {
 					data := strings.TrimPrefix(trimmedLine, "data: ")
 					if data == "[DONE]" {
+						if verbose {
+							log.Printf("[responses-api] Received [DONE], sending final events")
+						}
 						sendFinalEvents(nil)
 						if _, err := writer.Write([]byte("data: [DONE]\n\n")); err != nil {
 							if verbose {
@@ -667,6 +686,9 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 					} else {
 						var chunk ChatCompletionChunk
 						if errUnmarshal := json.Unmarshal([]byte(data), &chunk); errUnmarshal == nil && len(chunk.ID) > 0 {
+							if verbose {
+								log.Printf("[responses-api] Parsed chunk: ID=%s, Choices=%d", chunk.ID, len(chunk.Choices))
+							}
 							if responseID == "" {
 								responseID = strings.Replace(chunk.ID, "chatcmpl-", "resp_", 1)
 								createdAt = chunk.Created
@@ -761,6 +783,10 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 								}
 							}
 						} else {
+							if verbose {
+								log.Printf("[responses-api] Failed to parse chunk or empty ID: %v, data: %s", errUnmarshal, trimmedLine[:min(100, len(trimmedLine))])
+							}
+							// Forward non-JSON or unparseable data as-is
 							if _, err := writer.Write([]byte(trimmedLine + "\n\n")); err != nil {
 								if verbose {
 									log.Printf("[responses-api] Client disconnected: %v", err)
