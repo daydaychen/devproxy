@@ -512,6 +512,8 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 	resp.Header.Set("Cache-Control", "no-cache")
 	resp.Header.Set("Connection", "keep-alive")
 	resp.Header.Set("X-Accel-Buffering", "no")
+	// Ensure Content-Type is set for SSE
+	resp.Header.Set("Content-Type", "text/event-stream")
 
 	go func() {
 		defer originalBody.Close()
@@ -523,6 +525,10 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 		var responseID string
 		var createdAt int64
 		var model string
+
+		if verbose {
+			log.Printf("[responses-api] handleStream: started with 4KB buffer")
+		}
 
 		// State for message (Item 0)
 		var fullContent strings.Builder
@@ -543,40 +549,43 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 		toolCalls := make(map[int]*toolCallState)
 
 		var completedSent bool
+		var hasError bool
 
 		// writeEventWrapper wraps writeEvent and logs errors for client disconnect detection
-		writeEventWrapper := func(eventType string, data interface{}) {
+		writeEventWrapper := func(eventType string, data interface{}) bool {
 			if err := p.writeEvent(writer, eventType, data); err != nil {
 				if verbose {
 					log.Printf("[responses-api] Client disconnected while writing event %s: %v", eventType, err)
 				}
-				// Client disconnected, stop processing
-				return
+				hasError = true
+				return false
 			}
+			return true
 		}
 
 		// Helper to close the message item
 		finishMessage := func() {
-			if messageAdded && !messageDone {
-				writeEventWrapper("response.output_text.done", ResponsesAPIEvent{
+			if messageAdded && !messageDone && !hasError {
+				if writeEventWrapper("response.output_text.done", ResponsesAPIEvent{
 					Type: "response.output_text.done", ResponseID: responseID, ItemID: messageItemID,
 					ContentPartIndex: 0, ContentPart: &ContentPart{Type: "output_text", Index: 0, Text: fullContent.String()},
-				})
-				writeEventWrapper("response.content_part.done", ResponsesAPIEvent{
-					Type: "response.content_part.done", ResponseID: responseID, ItemID: messageItemID,
-					ContentPartIndex: 0, ContentPart: &ContentPart{Type: "output_text", Index: 0, Text: fullContent.String()},
-				})
-				writeEventWrapper("response.output_item.done", ResponsesAPIEvent{
-					Type: "response.output_item.done", ResponseID: responseID, OutputIndex: 0,
-					Item: &Item{ID: messageItemID, Type: "message", Status: "completed", Role: "assistant", Content: []Content{{Type: "output_text", Text: fullContent.String()}}},
-				})
+				}) {
+					writeEventWrapper("response.content_part.done", ResponsesAPIEvent{
+						Type: "response.content_part.done", ResponseID: responseID, ItemID: messageItemID,
+						ContentPartIndex: 0, ContentPart: &ContentPart{Type: "output_text", Index: 0, Text: fullContent.String()},
+					})
+					writeEventWrapper("response.output_item.done", ResponsesAPIEvent{
+						Type: "response.output_item.done", ResponseID: responseID, OutputIndex: 0,
+						Item: &Item{ID: messageItemID, Type: "message", Status: "completed", Role: "assistant", Content: []Content{{Type: "output_text", Text: fullContent.String()}}},
+					})
+				}
 				messageDone = true
 			}
 		}
 
 		// Helper to close a tool call item
 		finishToolCall := func(idx int, tc *toolCallState) {
-			if tc.Added && !tc.Done {
+			if tc.Added && !tc.Done && !hasError {
 				itemIdx := 0
 				if messageAdded {
 					itemIdx = 1
@@ -593,10 +602,13 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 		}
 
 		sendFinalEvents := func(usage interface{}) {
-			if completedSent {
+			if completedSent || hasError {
 				return
 			}
 			finishMessage()
+			if hasError {
+				return
+			}
 
 			finalItems := make([]Item, 0)
 			if messageAdded {
@@ -610,6 +622,9 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 			for i := 0; i < len(toolCalls); i++ {
 				if tc, ok := toolCalls[i]; ok {
 					finishToolCall(i, tc)
+					if hasError {
+						return
+					}
 					itemIdx := len(finalItems)
 					tItemID := fmt.Sprintf("msg_%s_%d", responseID, itemIdx)
 					finalItems = append(finalItems, Item{
@@ -618,10 +633,12 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 				}
 			}
 
-			p.writeEvent(writer, "response.completed", ResponsesAPIEvent{
-				Type: "response.completed", ResponseID: responseID,
-				Response: &ResponsesAPIResponse{ID: responseID, Object: "response", CreatedAt: createdAt, Model: model, Usage: usage, Output: finalItems},
-			})
+			if !hasError {
+				p.writeEvent(writer, "response.completed", ResponsesAPIEvent{
+					Type: "response.completed", ResponseID: responseID,
+					Response: &ResponsesAPIResponse{ID: responseID, Object: "response", CreatedAt: createdAt, Model: model, Usage: usage, Output: finalItems},
+				})
+			}
 			completedSent = true
 		}
 
@@ -668,31 +685,40 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 								if delta.Content != "" {
 									if !messageAdded {
 										messageItemID = fmt.Sprintf("msg_%s_0", responseID)
-										writeEventWrapper("response.output_item.added", ResponsesAPIEvent{
+										if !writeEventWrapper("response.output_item.added", ResponsesAPIEvent{
 											Type: "response.output_item.added", ResponseID: responseID, OutputIndex: 0,
 											Item: &Item{ID: messageItemID, Type: "message", Status: "in_progress", Role: "assistant"},
-										})
+										}) {
+											return
+										}
 										messageAdded = true
 									}
 									if !messagePartAdded {
-										writeEventWrapper("response.content_part.added", ResponsesAPIEvent{
+										if !writeEventWrapper("response.content_part.added", ResponsesAPIEvent{
 											Type: "response.content_part.added", ResponseID: responseID, ItemID: messageItemID,
 											ContentPart: &ContentPart{Type: "output_text", Index: 0},
-										})
+										}) {
+											return
+										}
 										messagePartAdded = true
 									}
 									fullContent.WriteString(delta.Content)
 									messageSeqNum++
-									writeEventWrapper("response.output_text.delta", ResponsesAPIEvent{
+									if !writeEventWrapper("response.output_text.delta", ResponsesAPIEvent{
 										Type: "response.output_text.delta", ResponseID: responseID, ItemID: messageItemID,
 										Delta: delta.Content, SequenceNumber: messageSeqNum,
-									})
+									}) {
+										return
+									}
 								}
 
 								// 2. Process Tool Calls
 								if len(delta.ToolCalls) > 0 {
 									// If we were sending text, finish that item first to keep order
 									finishMessage()
+									if hasError {
+										return
+									}
 
 									for _, tcChunk := range delta.ToolCalls {
 										tc, ok := toolCalls[tcChunk.Index]
@@ -719,10 +745,12 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 											itemIdx += tcChunk.Index
 											tItemID := fmt.Sprintf("msg_%s_%d", responseID, itemIdx)
 
-											writeEventWrapper("response.output_item.added", ResponsesAPIEvent{
+											if !writeEventWrapper("response.output_item.added", ResponsesAPIEvent{
 												Type: "response.output_item.added", ResponseID: responseID, OutputIndex: itemIdx,
 												Item: &Item{ID: tItemID, Type: "function_call", Status: "in_progress", Name: tc.Name, CallID: tc.ID},
-											})
+											}) {
+												return
+											}
 											tc.Added = true
 										}
 									}
