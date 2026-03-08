@@ -561,6 +561,9 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 
 		// writeEventWrapper wraps writeEvent and logs errors for client disconnect detection
 		writeEventWrapper := func(eventType string, data interface{}) bool {
+			if verbose {
+				log.Printf("[responses-api] Writing event: %s", eventType)
+			}
 			if err := p.writeEvent(writer, eventType, data); err != nil {
 				if verbose {
 					log.Printf("[responses-api] Client disconnected while writing event %s: %v", eventType, err)
