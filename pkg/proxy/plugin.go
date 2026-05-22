@@ -41,6 +41,13 @@ func init() {
 	responsesAPIPlugin := &ResponsesAPIPlugin{}
 	RegisterPlugin(responsesAPIPlugin)
 	RegisterResponsePlugin(responsesAPIPlugin)
+
+	anthropicThinkingPlugin := &AnthropicThinkingFixPlugin{}
+	RegisterPlugin(anthropicThinkingPlugin)
+	RegisterResponsePlugin(anthropicThinkingPlugin)
+
+	forceStreamPlugin := &ForceStreamPlugin{}
+	RegisterPlugin(forceStreamPlugin)
 }
 
 // RegisterPlugin 注册一个请求插件
