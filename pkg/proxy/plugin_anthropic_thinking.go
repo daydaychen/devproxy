@@ -8,6 +8,8 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/elazarl/goproxy"
 )
@@ -82,8 +84,50 @@ func (p *AnthropicThinkingFixPlugin) rewrite(src io.ReadCloser, dst *io.PipeWrit
 
 	var pendingEventType string
 
+	// 启动自动保活 goroutine，避免上游在超长 Prefill 时静默导致客户端或网关超时
+	keepAliveStop := make(chan struct{})
+	defer close(keepAliveStop)
+
+	var activeMu sync.Mutex
+	lastActive := time.Now()
+
+	go func() {
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-keepAliveStop:
+				return
+			case <-ticker.C:
+				activeMu.Lock()
+				idle := time.Since(lastActive)
+				activeMu.Unlock()
+
+				// 如果已经超过 3 秒没有任何读取活动，则主动发送 ping 帧
+				if idle >= 3*time.Second {
+					p.writeEvent(dst, "ping", map[string]interface{}{
+						"type": "ping",
+					})
+					if verbose {
+						log.Printf("[%s] 自动发送 ping 保活事件 (已静默 %v)", p.Name(), idle.Round(time.Second))
+					}
+					// 主动刷新活跃时间，避免在依然没有真实数据时过于高频写入
+					activeMu.Lock()
+					lastActive = time.Now()
+					activeMu.Unlock()
+				}
+			}
+		}
+	}()
+
 	for {
 		line, err := br.ReadString('\n')
+
+		// 每次读操作完成后，立即刷新活跃时间
+		activeMu.Lock()
+		lastActive = time.Now()
+		activeMu.Unlock()
+
 		if err != nil && err != io.EOF {
 			if verbose {
 				log.Printf("[%s] 读取响应体出错: %v", p.Name(), err)

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/elazarl/goproxy"
 )
@@ -439,6 +440,79 @@ func TestAnthropicThinkingFix_ToolUseMissingInput(t *testing.T) {
 	inputMap, ok := input.(map[string]interface{})
 	if !ok || len(inputMap) != 0 {
 		t.Errorf("补齐的 input 属性应为空的 map[string]interface{}，实际: %v", input)
+	}
+}
+
+type slowReader struct {
+	readCount int
+}
+
+func (s *slowReader) Read(p []byte) (n int, err error) {
+	if s.readCount == 0 {
+		s.readCount++
+		// 第一个数据：message_start
+		data := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"id\":\"msg_t\",\"content\":[]}}\n\n"
+		copy(p, data)
+		return len(data), nil
+	} else if s.readCount == 1 {
+		s.readCount++
+		// 故意休眠 4500 毫秒，模拟 Prefill 延迟
+		time.Sleep(4500 * time.Millisecond)
+		data := "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+		copy(p, data)
+		return len(data), nil
+	}
+	return 0, io.EOF
+}
+
+func (s *slowReader) Close() error {
+	return nil
+}
+
+// TestAnthropicThinkingFix_KeepAlive 验证自动保活 ping 事件的分发。
+func TestAnthropicThinkingFix_KeepAlive(t *testing.T) {
+	plugin := &AnthropicThinkingFixPlugin{}
+	ctx := &goproxy.ProxyCtx{}
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       &slowReader{},
+	}
+	resp.Header.Set("Content-Type", "text/event-stream")
+
+	if err := plugin.ProcessResponse(resp, ctx, false); err != nil {
+		t.Fatalf("ProcessResponse 失败: %v", err)
+	}
+
+	reader := bufio.NewReader(resp.Body)
+	var events []map[string]interface{}
+	for {
+		line, err := reader.ReadString('\n')
+		if err == io.EOF {
+			break
+		}
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "data: ") {
+			data := strings.TrimPrefix(trimmed, "data: ")
+			var ev map[string]interface{}
+			if err := json.Unmarshal([]byte(data), &ev); err == nil {
+				events = append(events, ev)
+			}
+		}
+	}
+
+	// 期望在 message_start 和 message_stop 之间，至少收到了 1 个 ping 事件
+	hasPing := false
+	for _, ev := range events {
+		if ev["type"] == "ping" {
+			hasPing = true
+			break
+		}
+	}
+
+	if !hasPing {
+		t.Errorf("由于休眠了 4.5 秒，理应发送至少 1 次 ping 保活事件，实际事件流为:\n%s", dumpEvents(events))
 	}
 }
 
