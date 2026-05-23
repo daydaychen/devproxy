@@ -407,6 +407,41 @@ func TestAnthropicThinkingFix_MalformedParallelToolUse(t *testing.T) {
 	}
 }
 
+// TestAnthropicThinkingFix_ToolUseMissingInput 验证当 content_block_start 里的 tool_use 缺失必填属性 input 时，
+// 插件能自动为它补齐为空的 map 对象。
+func TestAnthropicThinkingFix_ToolUseMissingInput(t *testing.T) {
+	stream := []string{
+		"event: message_start",
+		`data: {"type":"message_start","message":{"type":"message","role":"assistant","id":"msg_t","content":[]}}`,
+		"event: content_block_start",
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tool-ee07f2fb4e20426eaa66a402d5f72372","name":"Bash"}}`,
+		"event: content_block_stop",
+		`data: {"type":"content_block_stop","index":0}`,
+		"event: message_stop",
+		`data: {"type":"message_stop"}`,
+	}
+
+	events := runPlugin(t, stream)
+
+	startIdx := findEvent(events, func(ev map[string]interface{}) bool {
+		return ev["type"] == "content_block_start"
+	})
+	if startIdx < 0 {
+		t.Fatalf("找不到 content_block_start\n%s", dumpEvents(events))
+	}
+
+	cb := events[startIdx]["content_block"].(map[string]interface{})
+	input, exists := cb["input"]
+	if !exists {
+		t.Fatalf("未成功补齐缺失的 input 属性\n%s", dumpEvents(events))
+	}
+
+	inputMap, ok := input.(map[string]interface{})
+	if !ok || len(inputMap) != 0 {
+		t.Errorf("补齐的 input 属性应为空的 map[string]interface{}，实际: %v", input)
+	}
+}
+
 func dumpEvents(events []map[string]interface{}) string {
 	var b strings.Builder
 	for i, ev := range events {

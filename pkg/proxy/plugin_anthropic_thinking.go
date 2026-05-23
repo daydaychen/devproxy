@@ -140,6 +140,11 @@ func (p *AnthropicThinkingFixPlugin) dispatch(dst io.Writer, state *thinkingFixS
 
 		if blockType == "tool_use" || blockType == "server_tool_use" {
 			state.sawToolUse = true
+			if cb != nil {
+				if _, hasInput := cb["input"]; !hasInput {
+					cb["input"] = map[string]interface{}{}
+				}
+			}
 			id, _ := cb["id"].(string)
 			name, _ := cb["name"].(string)
 			state.activeTool = &toolUseInfo{
@@ -155,7 +160,7 @@ func (p *AnthropicThinkingFixPlugin) dispatch(dst io.Writer, state *thinkingFixS
 		} else {
 			state.activeTool = nil
 		}
-		p.writeRawEvent(dst, eventType, data)
+		p.writeEvent(dst, eventType, event)
 
 	case "content_block_delta":
 		delta, _ := event["delta"].(map[string]interface{})
