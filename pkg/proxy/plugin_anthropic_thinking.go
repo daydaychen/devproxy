@@ -54,12 +54,23 @@ func (p *AnthropicThinkingFixPlugin) ProcessResponse(resp *http.Response, ctx *g
 	return nil
 }
 
+type toolUseInfo struct {
+	id        string
+	name      string
+	origIndex int
+	currIndex int
+	count     int
+}
+
 type thinkingFixState struct {
 	openIndex       int
 	hasOpenBlock    bool
 	sawToolUse      bool
 	sawMessageDelta bool
 	sawMessageStop  bool
+
+	activeTool   *toolUseInfo
+	maxIndexSent int
 }
 
 func (p *AnthropicThinkingFixPlugin) rewrite(src io.ReadCloser, dst *io.PipeWriter, verbose bool) {
@@ -125,23 +136,102 @@ func (p *AnthropicThinkingFixPlugin) dispatch(dst io.Writer, state *thinkingFixS
 		state.openIndex = index
 		state.hasOpenBlock = true
 		cb, _ := event["content_block"].(map[string]interface{})
-		if blockType, _ := cb["type"].(string); blockType == "tool_use" || blockType == "server_tool_use" {
+		blockType, _ := cb["type"].(string)
+
+		if blockType == "tool_use" || blockType == "server_tool_use" {
 			state.sawToolUse = true
+			id, _ := cb["id"].(string)
+			name, _ := cb["name"].(string)
+			state.activeTool = &toolUseInfo{
+				id:        id,
+				name:      name,
+				origIndex: index,
+				currIndex: index,
+				count:     0,
+			}
+			if index > state.maxIndexSent {
+				state.maxIndexSent = index
+			}
+		} else {
+			state.activeTool = nil
 		}
 		p.writeRawEvent(dst, eventType, data)
 
 	case "content_block_delta":
 		delta, _ := event["delta"].(map[string]interface{})
-		if deltaType, _ := delta["type"].(string); deltaType == "signature_delta" {
+		deltaType, _ := delta["type"].(string)
+
+		if deltaType == "signature_delta" {
 			if verbose {
 				log.Printf("[%s] 丢弃 signature_delta(index=%d)", p.Name(), index)
 			}
 			return
 		}
+
+		if deltaType == "input_json_delta" && state.activeTool != nil {
+			partialJSON, _ := delta["partial_json"].(string)
+			
+			// 检查这是否是一个完整合法的 JSON 对象
+			var temp map[string]interface{}
+			isCompleteJSON := strings.HasPrefix(strings.TrimSpace(partialJSON), "{") && json.Unmarshal([]byte(partialJSON), &temp) == nil
+			
+			state.activeTool.count++
+
+			if state.activeTool.count > 1 && isCompleteJSON {
+				// 1. 发送 content_block_stop 结束上一个 currIndex
+				p.writeEvent(dst, "content_block_stop", map[string]interface{}{
+					"type":  "content_block_stop",
+					"index": state.activeTool.currIndex,
+				})
+
+				// 2. 递增最大 index 和生成新的 id
+				state.maxIndexSent++
+				newIndex := state.maxIndexSent
+				newID := fmt.Sprintf("%s_%d", state.activeTool.id, state.activeTool.count-1)
+
+				// 3. 更新 activeTool 状态
+				state.activeTool.currIndex = newIndex
+
+				// 4. 发送新的 content_block_start
+				p.writeEvent(dst, "content_block_start", map[string]interface{}{
+					"type":  "content_block_start",
+					"index": newIndex,
+					"content_block": map[string]interface{}{
+						"type":  "tool_use",
+						"id":    newID,
+						"name":  state.activeTool.name,
+						"input": map[string]interface{}{},
+					},
+				})
+
+				// 5. 修改当前 event 里的 index
+				event["index"] = newIndex
+				p.writeEvent(dst, eventType, event)
+
+				if verbose {
+					log.Printf("[%s] 检测到并行工具调用 Bug，已自动拆分为新工具调用: index=%d, id=%s", p.Name(), newIndex, newID)
+				}
+				return
+			}
+		}
+
+		if state.activeTool != nil && state.activeTool.currIndex != index {
+			event["index"] = state.activeTool.currIndex
+			p.writeEvent(dst, eventType, event)
+			return
+		}
+
 		p.writeRawEvent(dst, eventType, data)
 
 	case "content_block_stop":
 		state.hasOpenBlock = false
+		if state.activeTool != nil && state.activeTool.currIndex != index {
+			event["index"] = state.activeTool.currIndex
+			p.writeEvent(dst, eventType, event)
+			state.activeTool = nil
+			return
+		}
+		state.activeTool = nil
 		p.writeRawEvent(dst, eventType, data)
 
 	case "message_delta":
@@ -193,6 +283,9 @@ func (p *AnthropicThinkingFixPlugin) closeLingeringBlock(dst io.Writer, state *t
 		return
 	}
 	idx := state.openIndex
+	if state.activeTool != nil {
+		idx = state.activeTool.currIndex
+	}
 	p.writeEvent(dst, "content_block_stop", map[string]interface{}{
 		"type":  "content_block_stop",
 		"index": idx,

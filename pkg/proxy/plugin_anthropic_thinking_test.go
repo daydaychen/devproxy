@@ -335,6 +335,78 @@ func TestAnthropicThinkingFix_TextOnlyPassthrough(t *testing.T) {
 	}
 }
 
+// TestAnthropicThinkingFix_MalformedParallelToolUse 验证遇到合并在同一个 index 下的并行工具调用 Bug 时，
+// 插件能正确将其拆分成符合 Anthropic 规范的多个 content_block。
+func TestAnthropicThinkingFix_MalformedParallelToolUse(t *testing.T) {
+	stream := []string{
+		"event: message_start",
+		`data: {"type":"message_start","message":{"type":"message","role":"assistant","id":"msg_t","content":[]}}`,
+		"event: content_block_start",
+		`data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call_abc","name":"Bash","input":{}}}`,
+		"event: content_block_delta",
+		`data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\n  \"command\": \"cat README.md\",\n  \"description\": \"Read README\"\n}"}}`,
+		"event: content_block_delta",
+		`data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\n  \"command\": \"cat README_CN.md\",\n  \"description\": \"Read README_CN\"\n}"}}`,
+		"event: content_block_stop",
+		`data: {"type":"content_block_stop","index":1}`,
+		"event: message_stop",
+		`data: {"type":"message_stop"}`,
+	}
+
+	events := runPlugin(t, stream)
+
+	var starts []map[string]interface{}
+	var deltas []map[string]interface{}
+	var stops []map[string]interface{}
+
+	for _, ev := range events {
+		switch ev["type"] {
+		case "content_block_start":
+			starts = append(starts, ev)
+		case "content_block_delta":
+			deltas = append(deltas, ev)
+		case "content_block_stop":
+			stops = append(stops, ev)
+		}
+	}
+
+	if len(starts) != 2 {
+		t.Fatalf("应该有 2 个 content_block_start，实际有 %d\n%s", len(starts), dumpEvents(events))
+	}
+	if len(deltas) != 2 {
+		t.Fatalf("应该有 2 个 content_block_delta，实际有 %d\n%s", len(deltas), dumpEvents(events))
+	}
+	if len(stops) != 2 {
+		t.Fatalf("应该有 2 个 content_block_stop，实际有 %d\n%s", len(stops), dumpEvents(events))
+	}
+
+	// 校验第一个工具调用
+	cb1 := starts[0]["content_block"].(map[string]interface{})
+	if cb1["id"] != "call_abc" || cb1["name"] != "Bash" || starts[0]["index"].(float64) != 1 {
+		t.Errorf("第一个工具 start 不正确: %v", starts[0])
+	}
+	d1 := deltas[0]["delta"].(map[string]interface{})
+	if deltas[0]["index"].(float64) != 1 || !strings.Contains(d1["partial_json"].(string), "README.md") {
+		t.Errorf("第一个工具 delta 不正确: %v", deltas[0])
+	}
+	if stops[0]["index"].(float64) != 1 {
+		t.Errorf("第一个工具 stop 不正确: %v", stops[0])
+	}
+
+	// 校验第二个工具调用（被成功拆分）
+	cb2 := starts[1]["content_block"].(map[string]interface{})
+	if cb2["id"] != "call_abc_1" || cb2["name"] != "Bash" || starts[1]["index"].(float64) != 2 {
+		t.Errorf("第二个工具 start 不正确: %v", starts[1])
+	}
+	d2 := deltas[1]["delta"].(map[string]interface{})
+	if deltas[1]["index"].(float64) != 2 || !strings.Contains(d2["partial_json"].(string), "README_CN.md") {
+		t.Errorf("第二个工具 delta 不正确: %v", deltas[1])
+	}
+	if stops[1]["index"].(float64) != 2 {
+		t.Errorf("第二个工具 stop 不正确: %v", stops[1])
+	}
+}
+
 func dumpEvents(events []map[string]interface{}) string {
 	var b strings.Builder
 	for i, ev := range events {
