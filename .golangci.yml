@@ -1,18 +1,12 @@
 # golangci-lint 配置文件
-# https://golangci-lint.run/usage/configuration/
 
 run:
   timeout: 5m
-  issues-exit-code: 1
   tests: true
-  skip-dirs:
-    - vendor
-    - third_party
 
 output:
-  format: colored-line-number
-  print-issued-lines: true
-  print-linter-name: true
+  formats:
+    - format: colored-line-number
 
 linters:
   enable:
@@ -41,14 +35,10 @@ linters-settings:
     check-blank: true
 
   govet:
-    check-shadowing: true
     enable-all: true
 
-  golint:
-    min-confidence: 0.8
-
   goimports:
-    local-prefixes: devproxy
+    local-prefixes: github.com/daydaychen/devproxy
 
   dupl:
     threshold: 100
@@ -65,7 +55,7 @@ linters-settings:
 
   gosec:
     excludes:
-      - G204  # Subprocess launched with function call as argument
+      - G204
 
 issues:
   exclude-rules:
@@ -80,4 +70,3 @@ issues:
 
   max-issues-per-linter: 50
   max-same-issues: 3
-  new: false

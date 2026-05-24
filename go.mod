@@ -1,11 +1,11 @@
 module github.com/daydaychen/devproxy
 
-go 1.25.6
+go 1.24.0
 
 require (
 	github.com/elazarl/goproxy v1.8.0
 	github.com/spf13/cobra v1.10.2
-	golang.org/x/net v0.51.0
+	golang.org/x/net v0.50.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 

@@ -18,10 +18,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install release-please
-        run: |
-         curl -fsSL https://github.com/googleapis/release-please/releases/download/nightly-2025-05-24/release-please-cli-linux-x64.tar.gz | tar xz -C /usr/local/bin
-
-      - name: Run release-please
-        run: |
-          release-please init --release-type go --target-branch main
+      - uses: googleapis/release-please-action@v4
+        with:
+          release-type: go
+          target-branch: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+          default-branch: main
