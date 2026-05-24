@@ -141,13 +141,13 @@ func TestOpenAIResponsesPlugin_HandleStream(t *testing.T) {
 	}
 
 	// 验证事件序列
-	// 期望: response.created, response.output_item.added, response.content_part.added, 
+	// 期望: response.created, response.output_item.added, response.content_part.added,
 	//       response.output_text.delta, response.output_text.delta,
 	//       response.output_text.done, response.content_part.done, response.output_item.done, response.completed
 	if len(events) < 8 {
 		t.Errorf("Expected at least 8 events, got %d", len(events))
 	}
-	
+
 	lastEvent := events[len(events)-1]
 	if lastEvent.Type != "response.completed" {
 		t.Errorf("Expected last event to be response.completed, got %s", lastEvent.Type)

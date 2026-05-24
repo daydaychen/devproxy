@@ -219,11 +219,11 @@ func (p *AnthropicThinkingFixPlugin) dispatch(dst io.Writer, state *thinkingFixS
 
 		if deltaType == "input_json_delta" && state.activeTool != nil {
 			partialJSON, _ := delta["partial_json"].(string)
-			
+
 			// 检查这是否是一个完整合法的 JSON 对象
 			var temp map[string]interface{}
 			isCompleteJSON := strings.HasPrefix(strings.TrimSpace(partialJSON), "{") && json.Unmarshal([]byte(partialJSON), &temp) == nil
-			
+
 			state.activeTool.count++
 
 			if state.activeTool.count > 1 && isCompleteJSON {

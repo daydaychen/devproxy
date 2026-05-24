@@ -88,11 +88,11 @@ type ContentPart struct {
 
 // ResponsesAPIResponse 为 Responses API 响应结构
 type ResponsesAPIResponse struct {
-	ID        string `json:"id"`
-	Object    string `json:"object"`
-	CreatedAt int64  `json:"created_at"`
-	Model     string `json:"model"`
-	Output    []Item `json:"output"`
+	ID        string      `json:"id"`
+	Object    string      `json:"object"`
+	CreatedAt int64       `json:"created_at"`
+	Model     string      `json:"model"`
+	Output    []Item      `json:"output"`
 	Usage     interface{} `json:"usage,omitempty"`
 }
 
@@ -222,8 +222,8 @@ func (p *OpenAIResponsesPlugin) handleJSON(resp *http.Response, verbose bool) er
 	resp.Body = io.NopCloser(bytes.NewReader(newBodyBytes))
 	resp.ContentLength = int64(len(newBodyBytes))
 	resp.Header.Set("Content-Length", fmt.Sprint(len(newBodyBytes)))
-	
-	log.Printf("[openai-responses] 转换成功: %s (%s) -> %s (response), Items: %d", 
+
+	log.Printf("[openai-responses] 转换成功: %s (%s) -> %s (response), Items: %d",
 		chatResp.ID, chatResp.Object, resResp.ID, len(resResp.Output))
 	return nil
 }
@@ -256,7 +256,7 @@ func (p *OpenAIResponsesPlugin) handleStream(resp *http.Response, verbose bool) 
 		for {
 			line, err := br.ReadString('\n')
 			trimmedLine := strings.TrimRight(line, "\r\n")
-			
+
 			if trimmedLine == "" && line != "" {
 				writer.Write([]byte("\n"))
 			} else if trimmedLine != "" {
@@ -290,16 +290,16 @@ func (p *OpenAIResponsesPlugin) handleStream(resp *http.Response, verbose bool) 
 										if item.Type == "function_call" {
 											// 确保 SDK 收到 added 和 done 事件
 											p.writeEvent(writer, "response.output_item.added", ResponsesAPIEvent{
-												Type:       "response.output_item.added",
-												ResponseID: responseID,
+												Type:        "response.output_item.added",
+												ResponseID:  responseID,
 												OutputIndex: i,
-												Item:       &item,
+												Item:        &item,
 											})
 											p.writeEvent(writer, "response.output_item.done", ResponsesAPIEvent{
-												Type:       "response.output_item.done",
-												ResponseID: responseID,
+												Type:        "response.output_item.done",
+												ResponseID:  responseID,
 												OutputIndex: i,
-												Item:       &item,
+												Item:        &item,
 											})
 										}
 									}
@@ -317,7 +317,7 @@ func (p *OpenAIResponsesPlugin) handleStream(resp *http.Response, verbose bool) 
 
 							// 规范化：修正 object 字段 (手术级替换)
 							modifiedData := strings.Replace(data, "\"object\":\"chat.completion\"", "\"object\":\"response\"", 1)
-							
+
 							// 补全 event: 头部并转发原始 JSON (保留所有未知字段)
 							writer.Write([]byte(fmt.Sprintf("event: %s\ndata: %s\n\n", eventType, modifiedData)))
 						} else {
@@ -329,7 +329,7 @@ func (p *OpenAIResponsesPlugin) handleStream(resp *http.Response, verbose bool) 
 									itemID = fmt.Sprintf("msg_%s_0", responseID)
 									createdAt = chunk.Created
 									model = chunk.Model
-									
+
 									p.writeEvent(writer, "response.created", ResponsesAPIEvent{
 										Type: "response.created", ResponseID: responseID,
 										Response: &ResponsesAPIResponse{ID: responseID, Object: "response", CreatedAt: createdAt, Model: model},
@@ -337,7 +337,7 @@ func (p *OpenAIResponsesPlugin) handleStream(resp *http.Response, verbose bool) 
 									p.writeEvent(writer, "response.output_item.added", ResponsesAPIEvent{
 										Type: "response.output_item.added", ResponseID: responseID,
 										OutputIndex: 0,
-										Item: &Item{ID: itemID, Type: "message", Status: "in_progress", Role: "assistant"},
+										Item:        &Item{ID: itemID, Type: "message", Status: "in_progress", Role: "assistant"},
 									})
 									p.writeEvent(writer, "response.content_part.added", ResponsesAPIEvent{
 										Type: "response.content_part.added", ResponseID: responseID, ItemID: itemID,
@@ -416,8 +416,8 @@ func (p *OpenAIResponsesPlugin) sendCompletionEvents(w io.Writer, responseID, it
 	})
 	// 6. response.output_item.done
 	p.writeEvent(w, "response.output_item.done", ResponsesAPIEvent{
-		Type:       "response.output_item.done",
-		ResponseID: responseID,
+		Type:        "response.output_item.done",
+		ResponseID:  responseID,
 		OutputIndex: 0,
 		Item: &Item{
 			ID:     itemID,

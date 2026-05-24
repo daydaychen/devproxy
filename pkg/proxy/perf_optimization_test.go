@@ -449,6 +449,7 @@ func BenchmarkAvoidStringConvert(b *testing.B) {
 // ============================================================================
 
 // 优化 1: 使用内联提示 (Go 1.20+)
+//
 //go:noinline
 func noInlineFunc(x int) int {
 	return x * 2
@@ -463,8 +464,8 @@ func inlineFunc(x int) int {
 func boundsCheckElimination(data []int, index int) int {
 	// 编译器可以消除第二次访问的边界检查
 	if index >= 0 && index < len(data) {
-		_ = data[index]      // 有边界检查
-		return data[index]   // 边界检查被消除
+		_ = data[index]    // 有边界检查
+		return data[index] // 边界检查被消除
 	}
 	return 0
 }

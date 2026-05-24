@@ -4,9 +4,6 @@ on:
   push:
     branches:
       - main
-  pull_request:
-    branches:
-      - main
 
 permissions:
   contents: write
@@ -22,5 +19,5 @@ jobs:
         with:
           release-type: go
           target-branch: main
-          token: ${{ secrets.GITHUB_TOKEN }}
           default-branch: main
+          token: ${{ secrets.GITHUB_TOKEN }}

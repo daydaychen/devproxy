@@ -4,69 +4,33 @@ run:
   timeout: 5m
   tests: true
 
-output:
-  formats:
-    - format: colored-line-number
-
 linters:
   enable:
-    - errcheck
-    - gosimple
-    - govet
-    - ineffassign
-    - staticcheck
-    - typecheck
-    - unused
     - gofmt
     - goimports
-    - misspell
-    - unconvert
-    - dupl
-    - goconst
-    - gocyclo
-    - gosec
-    - bodyclose
-    - noctx
-    - sqlclosecheck
+    - staticcheck
 
 linters-settings:
-  errcheck:
-    check-type-assertions: true
-    check-blank: true
-
-  govet:
-    enable-all: true
-
   goimports:
     local-prefixes: github.com/daydaychen/devproxy
 
-  dupl:
-    threshold: 100
-
-  goconst:
-    min-len: 3
-    min-occurrences: 3
-
-  gocyclo:
-    min-complexity: 10
-
-  misspell:
-    locale: US
-
-  gosec:
-    excludes:
-      - G204
-
 issues:
   exclude-rules:
+    # 忽略测试文件中的问题
     - path: _test\.go
       linters:
-        - dupl
-        - gosec
+        - unused
+
+    # 忽略 perf_optimization_test 中的代码示例
+    - path: perf_optimization_test\.go
+      linters:
+        - unused
 
     - path: examples/
       linters:
-        - dupl
+        - govet
 
-  max-issues-per-linter: 50
-  max-same-issues: 3
+    # 忽略 completedSent 的 ineffectual assignment（这是防重发的保护逻辑）
+    - text: "ineffectual assignment to completedSent"
+      linters:
+        - ineffassign

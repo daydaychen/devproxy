@@ -108,17 +108,17 @@ func loadConfig(cmd *cobra.Command) {
 }
 
 var (
-	matchPatterns  []string
-	overwriteRules []string
+	matchPatterns       []string
+	overwriteRules      []string
 	configRules         []config.RuleConfig
 	pluginNames         []string
 	responsePluginNames []string
-	upstreamProxy  string
-	port           int
-	verbose        bool
-	dumpTraffic    bool
-	logFile        string
-	configFile     string
+	upstreamProxy       string
+	port                int
+	verbose             bool
+	dumpTraffic         bool
+	logFile             string
+	configFile          string
 )
 
 var rootCmd = &cobra.Command{

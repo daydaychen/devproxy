@@ -6,8 +6,8 @@ import "net/http"
 type HeaderRewriter struct {
 	HeaderName       string
 	HeaderValue      string
-	headerKey        string   // 缓存标准化后的 key，避免重复计算
-	headerValueBytes []byte   // 预转换为 []byte 避免重复转换
+	headerKey        string // 缓存标准化后的 key，避免重复计算
+	headerValueBytes []byte // 预转换为 []byte 避免重复转换
 }
 
 // NewHeaderRewriter 创建请求头重写器（优化版）

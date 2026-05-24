@@ -51,17 +51,17 @@ type ResponseFmt struct {
 
 // ChatCompletionRequest represents the standard OpenAI Chat Completion request
 type ChatCompletionRequest struct {
-	Model               string                 `json:"model"`
-	Messages            []interface{}          `json:"messages"`
-	ResponseFormat      *ChatResponseFormat    `json:"response_format,omitempty"`
-	Stream              bool                   `json:"stream,omitempty"`
-	MaxTokens           int                    `json:"max_tokens,omitempty"`
-	MaxCompletionTokens int                    `json:"max_completion_tokens,omitempty"`
-	Temperature         *float64               `json:"temperature,omitempty"`
-	TopP                *float64               `json:"top_p,omitempty"`
-	N                   *int                   `json:"n,omitempty"`
-	Tools               []interface{}          `json:"tools,omitempty"`
-	ToolChoice          interface{}            `json:"tool_choice,omitempty"`
+	Model               string              `json:"model"`
+	Messages            []interface{}       `json:"messages"`
+	ResponseFormat      *ChatResponseFormat `json:"response_format,omitempty"`
+	Stream              bool                `json:"stream,omitempty"`
+	MaxTokens           int                 `json:"max_tokens,omitempty"`
+	MaxCompletionTokens int                 `json:"max_completion_tokens,omitempty"`
+	Temperature         *float64            `json:"temperature,omitempty"`
+	TopP                *float64            `json:"top_p,omitempty"`
+	N                   *int                `json:"n,omitempty"`
+	Tools               []interface{}       `json:"tools,omitempty"`
+	ToolChoice          interface{}         `json:"tool_choice,omitempty"`
 }
 
 type ChatResponseFormat struct {
@@ -100,7 +100,7 @@ func (p *ResponsesAPIPlugin) ProcessRequest(req *http.Request) error {
 
 	// 4. Transform to Chat Completion Request
 	messages := p.transformMessages(respReq.Input)
-	
+
 	// Prepend instructions as a developer/system message if present
 	if respReq.Instructions != "" {
 		instrMsg := map[string]interface{}{
@@ -404,7 +404,7 @@ func (p *ResponsesAPIPlugin) ProcessResponse(resp *http.Response, ctx *goproxy.P
 	// Detection logic:
 	// 1. Check for our internal marker header
 	isResponsesAPI := resp.Request.Header.Get("X-DevProxy-Responses-API") == "true"
-	
+
 	// 2. Fallback: Check if it's a chat/completions request (which we might have rewritten from /v1/responses)
 	// We only do this if we are SURE it was our plugin that did the rewrite.
 	// Since we are now using matchedRule in server.go, this plugin will only be called if the rule matched.
@@ -814,67 +814,6 @@ func (p *ResponsesAPIPlugin) handleStream(resp *http.Response, verbose bool) err
 	}()
 
 	return nil
-}
-
-func (p *ResponsesAPIPlugin) sendCompletionEvents(w io.Writer, responseID, itemID string, createdAt int64, model, text string, usage interface{}) {
-	p.writeEvent(w, "response.output_text.done", ResponsesAPIEvent{
-		Type:             "response.output_text.done",
-		ResponseID:       responseID,
-		ItemID:           itemID,
-		ContentPartIndex: 0,
-		ContentPart: &ContentPart{
-			Type:  "output_text",
-			Index: 0,
-			Text:  text,
-		},
-	})
-	p.writeEvent(w, "response.content_part.done", ResponsesAPIEvent{
-		Type:             "response.content_part.done",
-		ResponseID:       responseID,
-		ItemID:           itemID,
-		ContentPartIndex: 0,
-		ContentPart: &ContentPart{
-			Type:  "output_text",
-			Index: 0,
-			Text:  text,
-		},
-	})
-	p.writeEvent(w, "response.output_item.done", ResponsesAPIEvent{
-		Type:        "response.output_item.done",
-		ResponseID:  responseID,
-		OutputIndex: 0,
-		Item: &Item{
-			ID:     itemID,
-			Type:   "message",
-			Status: "completed",
-			Role:   "assistant",
-			Content: []Content{
-				{Type: "output_text", Text: text},
-			},
-		},
-	})
-	p.writeEvent(w, "response.completed", ResponsesAPIEvent{
-		Type:       "response.completed",
-		ResponseID: responseID,
-		Response: &ResponsesAPIResponse{
-			ID:        responseID,
-			Object:    "response",
-			CreatedAt: createdAt,
-			Model:     model,
-			Usage:     usage,
-			Output: []Item{
-				{
-					ID:     itemID,
-					Type:   "message",
-					Status: "completed",
-					Role:   "assistant",
-					Content: []Content{
-						{Type: "output_text", Text: text},
-					},
-				},
-			},
-		},
-	})
 }
 
 func (p *ResponsesAPIPlugin) writeEvent(w io.Writer, eventType string, data interface{}) error {

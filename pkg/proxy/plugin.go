@@ -33,7 +33,7 @@ var ResponsePluginRegistry = map[string]ResponsePlugin{}
 func init() {
 	// 注册内置插件
 	RegisterPlugin(&CodexFixPlugin{})
-	
+
 	openaiPlugin := &OpenAIResponsesPlugin{}
 	RegisterPlugin(openaiPlugin)
 	RegisterResponsePlugin(openaiPlugin)

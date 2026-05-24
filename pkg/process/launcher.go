@@ -74,10 +74,10 @@ func (l *ProcessLauncher) Start() error {
 	// 用于支持严格验证证书的二进制或语言（Rust, Python, Node 纯净版等）
 	if caPath != "" {
 		envVars = append(envVars,
-			fmt.Sprintf("SSL_CERT_FILE=%s", caPath),          // Rust / Go / curl 等通用标准
-			fmt.Sprintf("REQUESTS_CA_BUNDLE=%s", caPath),     // Python requests 库
-			fmt.Sprintf("NODE_EXTRA_CA_CERTS=%s", caPath),    // Node.js 原生支持
-			fmt.Sprintf("CURL_CA_BUNDLE=%s", caPath),         // CURL
+			fmt.Sprintf("SSL_CERT_FILE=%s", caPath),       // Rust / Go / curl 等通用标准
+			fmt.Sprintf("REQUESTS_CA_BUNDLE=%s", caPath),  // Python requests 库
+			fmt.Sprintf("NODE_EXTRA_CA_CERTS=%s", caPath), // Node.js 原生支持
+			fmt.Sprintf("CURL_CA_BUNDLE=%s", caPath),      // CURL
 		)
 	} else {
 		envVars = append(envVars, "NODE_EXTRA_CA_CERTS=")

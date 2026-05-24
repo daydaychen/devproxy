@@ -43,10 +43,10 @@ func (p *ForceStreamPlugin) ProcessRequest(req *http.Request) error {
 
 	// 检查逻辑：如果缺失 stream 字段，则补全为 true；如果已有（无论是 true 还是 false），则跳过
 	_, hasStream := payload["stream"]
-	
+
 	if !hasStream {
 		payload["stream"] = true
-		
+
 		newBodyBytes, err := json.Marshal(payload)
 		if err != nil {
 			log.Printf("[%s] 序列化失败: %v", p.Name(), err)
@@ -60,12 +60,12 @@ func (p *ForceStreamPlugin) ProcessRequest(req *http.Request) error {
 		req.Body = io.NopCloser(bytes.NewReader(newBodyBytes))
 		req.ContentLength = int64(len(newBodyBytes))
 		req.Header.Set("Content-Length", fmt.Sprintf("%d", len(newBodyBytes)))
-		
+
 		// 同时确保 Accept 头包含 text/event-stream
 		if req.Header.Get("Accept") == "" {
 			req.Header.Set("Accept", "text/event-stream")
 		}
-		
+
 		log.Printf("[%s] 缺失 stream 字段，已强制补全为 true", p.Name())
 		return nil
 	}

@@ -25,7 +25,7 @@ func (c *CodexFixPlugin) ProcessRequest(req *http.Request) error {
 	if req.Method != http.MethodPost {
 		return nil
 	}
-	
+
 	// 只处理 JSON 请求
 	contentType := req.Header.Get("Content-Type")
 	if !strings.Contains(contentType, "application/json") {
@@ -41,7 +41,7 @@ func (c *CodexFixPlugin) ProcessRequest(req *http.Request) error {
 	if err != nil {
 		return fmt.Errorf("codex-fix: 读取请求体失败: %w", err)
 	}
-	
+
 	log.Printf("[codex-fix] 收到请求, 原始 Body 长度: %d", len(bodyBytes))
 
 	// 关键修复：提供 GetBody 以支持重试，防止 502
@@ -96,7 +96,7 @@ func (c *CodexFixPlugin) ProcessRequest(req *http.Request) error {
 		return io.NopCloser(bytes.NewReader(newBodyBytes)), nil
 	}
 	req.Body, _ = req.GetBody()
-	
+
 	// 设置 ContentLength 数值，但移除 Header 级的显式设置，让 net/http 传输层自动处理
 	// 同时确保删除 Transfer-Encoding 以满足固定长度 Request 的规范
 	req.ContentLength = int64(len(newBodyBytes))
@@ -174,7 +174,7 @@ func (c *CodexFixPlugin) processMessageArray(messages []interface{}) bool {
 					sb.WriteString(s)
 				}
 			}
-			
+
 			newStr := strings.TrimRight(sb.String(), "\n")
 			log.Printf("[codex-fix] 消息 %d content 展平为文本 (前15字符: %s...)", i, truncateString(newStr, 15))
 			msg["content"] = newStr

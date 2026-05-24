@@ -56,7 +56,7 @@ func TestCodexFixPlugin(t *testing.T) {
 		modifiedBody, _ := io.ReadAll(req.Body)
 		sBody := strings.ReplaceAll(string(modifiedBody), " ", "")
 		sBody = strings.ReplaceAll(sBody, "\n", "")
-		
+
 		if !strings.Contains(sBody, `"content":"thought...answer"`) {
 			t.Errorf("Expected combined content, got: %s", string(modifiedBody))
 		}

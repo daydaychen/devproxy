@@ -40,10 +40,10 @@ type ProxyServer struct {
 	transport     *http.Transport // 优化的 Transport
 	defaultRule   *ProxyRule
 	// MITM 索引优化（2.1）
-	mitmHosts     map[string]bool    // 预计算的 MITM 域名集合
-	mitmPatterns  []*StringMatcher   // 路径模式匹配器
-	hasRegexRule  bool               // 是否有正则规则
-	hasGlobalRule bool               // 是否有全局规则
+	mitmHosts     map[string]bool  // 预计算的 MITM 域名集合
+	mitmPatterns  []*StringMatcher // 路径模式匹配器
+	hasRegexRule  bool             // 是否有正则规则
+	hasGlobalRule bool             // 是否有全局规则
 }
 
 // NewProxyServer 创建新的代理服务器（优化版：带连接池）
@@ -101,10 +101,10 @@ func NewProxyServer(port int, upstream string, verbose bool, logger *log.Logger)
 	h2t, err := http2.ConfigureTransports(transport)
 	if err == nil {
 		// HTTP/2 特定优化
-		h2t.MaxHeaderListSize = 10 << 20      // 10MB 头部限制
-		h2t.MaxReadFrameSize = 32768          // 32KB 帧大小
+		h2t.MaxHeaderListSize = 10 << 20       // 10MB 头部限制
+		h2t.MaxReadFrameSize = 32768           // 32KB 帧大小
 		h2t.ReadIdleTimeout = 30 * time.Second // 健康检查间隔
-		h2t.PingTimeout = 10 * time.Second    // PING 超时
+		h2t.PingTimeout = 10 * time.Second     // PING 超时
 	}
 
 	s.transport = transport
