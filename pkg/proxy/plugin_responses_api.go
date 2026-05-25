@@ -69,6 +69,109 @@ type ChatResponseFormat struct {
 	JSONSchema map[string]interface{} `json:"json_schema,omitempty"`
 }
 
+// Shared types for response handling
+type gzipReadCloser struct {
+	io.Reader
+	orig io.ReadCloser
+}
+
+func (g *gzipReadCloser) Close() error {
+	return g.orig.Close()
+}
+
+type ChatCompletionChunk struct {
+	ID      string `json:"id"`
+	Object  string `json:"object"`
+	Created int64  `json:"created"`
+	Model   string `json:"model"`
+	Choices []struct {
+		Index int `json:"index"`
+		Delta struct {
+			Role      string      `json:"role,omitempty"`
+			Content   string      `json:"content,omitempty"`
+			ToolCalls []ChunkTool `json:"tool_calls,omitempty"`
+		} `json:"delta"`
+		FinishReason *string `json:"finish_reason,omitempty"`
+	} `json:"choices"`
+	Usage map[string]interface{} `json:"usage,omitempty"`
+}
+
+type ChunkTool struct {
+	Index    int    `json:"index"`
+	ID       string `json:"id,omitempty"`
+	Type     string `json:"type,omitempty"`
+	Function struct {
+		Name      string `json:"name,omitempty"`
+		Arguments string `json:"arguments,omitempty"`
+	} `json:"function"`
+}
+
+type ChatCompletionResponse struct {
+	ID      string                 `json:"id"`
+	Object  string                 `json:"object"`
+	Created int64                  `json:"created"`
+	Model   string                 `json:"model"`
+	Choices []ChatCompletionChoice `json:"choices"`
+	Usage   map[string]interface{} `json:"usage,omitempty"`
+}
+
+type ChatCompletionChoice struct {
+	Index        int         `json:"index"`
+	Message      ChatMessage `json:"message"`
+	FinishReason *string     `json:"finish_reason,omitempty"`
+}
+
+type ChatMessage struct {
+	Role      string        `json:"role"`
+	Content   string        `json:"content"`
+	ToolCalls []interface{} `json:"tool_calls,omitempty"`
+}
+
+type ResponsesAPIEvent struct {
+	Type             string                `json:"type"`
+	ResponseID       string                `json:"response_id,omitempty"`
+	ItemID           string                `json:"item_id,omitempty"`
+	Item             *Item                 `json:"item,omitempty"`
+	ContentPart      *ContentPart          `json:"content_part,omitempty"`
+	ContentPartIndex int                   `json:"content_part_index,omitempty"`
+	Delta            string                `json:"delta,omitempty"`
+	SequenceNumber   int                   `json:"sequence_number,omitempty"`
+	OutputIndex      int                   `json:"output_index"`
+	Usage            interface{}           `json:"usage,omitempty"`
+	Response         *ResponsesAPIResponse `json:"response,omitempty"`
+}
+
+type ContentPart struct {
+	Type  string `json:"type"`
+	Index int    `json:"index"`
+	Text  string `json:"text,omitempty"`
+}
+
+type ResponsesAPIResponse struct {
+	ID        string      `json:"id"`
+	Object    string      `json:"object"`
+	CreatedAt int64       `json:"created_at"`
+	Model     string      `json:"model"`
+	Output    []Item      `json:"output"`
+	Usage     interface{} `json:"usage,omitempty"`
+}
+
+type Item struct {
+	ID        string    `json:"id"`
+	Type      string    `json:"type"`
+	Status    string    `json:"status,omitempty"`
+	Role      string    `json:"role,omitempty"`
+	Content   []Content `json:"content,omitempty"`
+	Name      string    `json:"name,omitempty"`
+	Arguments string    `json:"arguments,omitempty"`
+	CallID    string    `json:"call_id,omitempty"`
+}
+
+type Content struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
 func (p *ResponsesAPIPlugin) ProcessRequest(req *http.Request) error {
 	// Only intercept requests ending with /v1/responses
 	path := req.URL.Path
