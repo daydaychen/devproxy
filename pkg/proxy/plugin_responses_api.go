@@ -70,13 +70,14 @@ type ChatResponseFormat struct {
 }
 
 func (p *ResponsesAPIPlugin) ProcessRequest(req *http.Request) error {
-	// Only intercept /v1/responses
-	if req.URL.Path != "/v1/responses" {
+	// Only intercept requests ending with /v1/responses
+	path := req.URL.Path
+	if !strings.HasSuffix(path, "/v1/responses") {
 		return nil
 	}
 
-	// 1. Rewrite path
-	req.URL.Path = "/v1/chat/completions"
+	// 1. Rewrite path: /v1/responses -> /v1/chat/completions
+	req.URL.Path = strings.Replace(path, "/v1/responses", "/v1/chat/completions", 1)
 
 	// 2. Read body
 	bodyBytes, err := io.ReadAll(req.Body)
@@ -267,59 +268,54 @@ func (p *ResponsesAPIPlugin) transformTools(tools []interface{}) []interface{} {
 	if tools == nil {
 		return nil
 	}
-	output := make([]interface{}, 0, len(tools))
+
+	result := make([]interface{}, 0, len(tools))
 	for _, t := range tools {
 		tool, ok := t.(map[string]interface{})
 		if !ok {
-			output = append(output, t)
+			// Pass through non-map tools
+			result = append(result, t)
 			continue
 		}
 
 		toolType, _ := tool["type"].(string)
 
-		// 1. Standard Function Tool (Responses API format)
-		if toolType == "function" {
+		switch toolType {
+		case "function":
+			// Codex sends flat format: {"type": "function", "name": "...", "description": "...", "parameters": {...}}
+			// Chat API expects nested: {"type": "function", "function": {"name": "...", "description": "...", "parameters": {...}}}
 			newTool := map[string]interface{}{
 				"type": "function",
 			}
+			funcObj := make(map[string]interface{})
 
-			var fnParams map[string]interface{}
-			if fn, hasFn := tool["function"].(map[string]interface{}); hasFn {
-				fnParams = fn
-			} else {
-				// Flat format: name/parameters at top level
-				fnParams = tool
+			// Extract function properties
+			if name, ok := tool["name"].(string); ok {
+				funcObj["name"] = name
+			}
+			if desc, ok := tool["description"].(string); ok {
+				funcObj["description"] = desc
+			}
+			if params, ok := tool["parameters"]; ok {
+				funcObj["parameters"] = p.cleanParameters(params)
 			}
 
-			newTool["function"] = map[string]interface{}{
-				"name":        fnParams["name"],
-				"description": fnParams["description"],
-				"parameters":  p.cleanParameters(fnParams["parameters"]),
+			newTool["function"] = funcObj
+			result = append(result, newTool)
+
+		case "namespace":
+			// Namespace tools contain nested tools - extract them
+			if nestedTools, ok := tool["tools"].([]interface{}); ok {
+				result = append(result, p.transformTools(nestedTools)...)
 			}
-			output = append(output, newTool)
-			continue
+
+		default:
+			// Skip non-function tool types (web_search, image_generation, code_interpreter, etc.)
+			// Chat API only supports "function" type tools
 		}
-
-		// 2. Built-in Tools (web_search, etc.) -> Map to Function
-		if toolType != "" {
-			newTool := map[string]interface{}{
-				"type": "function",
-				"function": map[string]interface{}{
-					"name":        toolType,
-					"description": fmt.Sprintf("Built-in tool: %s", toolType),
-					"parameters": map[string]interface{}{
-						"type":       "object",
-						"properties": p.extractToolProperties(tool),
-					},
-				},
-			}
-			output = append(output, newTool)
-			continue
-		}
-
-		output = append(output, tool)
 	}
-	return output
+
+	return result
 }
 
 func (p *ResponsesAPIPlugin) extractToolProperties(tool map[string]interface{}) map[string]interface{} {
